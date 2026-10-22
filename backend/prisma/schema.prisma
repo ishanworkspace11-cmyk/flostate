@@ -1,0 +1,191 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum WorkflowStatus {
+  DRAFT
+  PUBLISHED
+  PAUSED
+}
+
+enum ExecutionStatus {
+  PENDING
+  READY
+  RUNNING
+  SUCCEEDED
+  FAILED
+  RETRYING
+  SKIPPED
+  CANCELLED
+}
+
+enum TriggerKind {
+  WEBHOOK
+  CRON
+  MANUAL
+}
+
+enum WorkerStatus {
+  IDLE
+  BUSY
+  OFFLINE
+  PAUSED
+}
+
+model Workflow {
+  id               String          @id @default(uuid())
+  name             String
+  description      String?
+  status           WorkflowStatus  @default(DRAFT)
+  draftVersion     Int             @default(1)
+  publishedVersion Int?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  versions         WorkflowVersion[]
+  executions       Execution[]
+  triggers         Trigger[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model WorkflowVersion {
+  id            String      @id @default(uuid())
+  workflowId    String
+  workflow      Workflow    @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  version       Int
+  nodes         Json        // Stored as JSON array of WorkflowNode
+  edges         Json        // Stored as JSON array of WorkflowEdge
+  changeSummary String?
+  isPublished   Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+
+  executions    Execution[]
+
+  @@unique([workflowId, version])
+  @@index([workflowId])
+}
+
+model Execution {
+  id                String          @id @default(uuid())
+  workflowId        String
+  workflow          Workflow        @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  workflowVersionId String
+  version           WorkflowVersion @relation(fields: [workflowVersionId], references: [id], onDelete: Restrict)
+  workflowName      String
+  workflowVersion   Int
+  triggerType       String          // 'manual' | 'webhook' | 'cron'
+  status            ExecutionStatus @default(PENDING)
+  input             Json            @default("{}")
+  output            Json?
+  error             String?
+  startedAt         DateTime        @default(now())
+  completedAt       DateTime?
+  durationMs        Int?
+
+  nodeExecutions    NodeExecution[]
+
+  @@index([workflowId])
+  @@index([workflowVersionId])
+  @@index([status])
+  @@index([startedAt])
+}
+
+model NodeExecution {
+  id           String          @id @default(uuid())
+  executionId  String
+  execution    Execution       @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  nodeId       String
+  nodeLabel    String
+  nodeType     String
+  status       ExecutionStatus @default(PENDING)
+  attempt      Int             @default(1)
+  maxAttempts  Int             @default(3)
+  input        Json?
+  output       Json?
+  error        String?
+  errorDetails Json?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  durationMs   Int?
+  logs         Json?           // Stored as JSON array of ExecutionLogEntry
+
+  @@index([executionId])
+  @@index([nodeId])
+  @@index([status])
+}
+
+model Trigger {
+  id              String      @id @default(uuid())
+  workflowId      String
+  workflow        Workflow    @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  name            String
+  kind            TriggerKind @default(WEBHOOK)
+  enabled         Boolean     @default(true)
+  cronExpression  String?
+  webhookPath     String?     @unique
+  webhookSecret   String?
+  lastTriggeredAt DateTime?
+  totalTriggers   Int         @default(0)
+  config          Json?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([workflowId])
+  @@index([kind])
+  @@index([webhookPath])
+}
+
+model WorkerInstance {
+  id                 String       @id
+  name               String
+  hostname           String
+  status             WorkerStatus @default(IDLE)
+  concurrency        Int          @default(5)
+  currentJobs        Json?        // Active jobs array
+  completedJobsCount Int          @default(0)
+  failedJobsCount    Int          @default(0)
+  uptimeSeconds      Int          @default(0)
+  lastHeartbeat      DateTime     @default(now())
+  isSimulated        Boolean      @default(false)
+  metadata           Json?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  @@index([status])
+  @@index([lastHeartbeat])
+}
+
+model ApplicationSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       Json
+  category    String   @default("general")
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([key])
+  @@index([category])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  action     String   // e.g. WORKFLOW_CREATED, WORKFLOW_PUBLISHED, EXECUTION_STARTED
+  entityType String   // e.g. WORKFLOW, TRIGGER, EXECUTION, WORKER
+  entityId   String
+  actor      String   @default("system")
+  details    Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}

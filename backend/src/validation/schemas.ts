@@ -1,0 +1,80 @@
+import { z } from 'zod';
+
+export const paginationQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  search: z.string().optional(),
+  status: z.string().optional(),
+});
+
+export const idParamSchema = z.object({
+  id: z.string().min(1, 'ID is required'),
+});
+
+export const nodeSchema = z.object({
+  id: z.string().min(1),
+  type: z.enum(['trigger', 'transform', 'httpRequest', 'delay', 'webhookAction']),
+  label: z.string().min(1),
+  position: z.object({
+    x: z.number(),
+    y: z.number(),
+  }),
+  config: z.record(z.any()).default({}),
+});
+
+export const edgeSchema = z.object({
+  id: z.string().min(1),
+  source: z.string().min(1),
+  target: z.string().min(1),
+  sourceHandle: z.string().nullable().optional(),
+  targetHandle: z.string().nullable().optional(),
+});
+
+export const createWorkflowSchema = z.object({
+  name: z.string().min(1, 'Workflow name is required').max(100),
+  description: z.string().optional().default(''),
+  nodes: z.array(nodeSchema).default([]),
+  edges: z.array(edgeSchema).default([]),
+  status: z.enum(['draft', 'published', 'paused']).default('draft'),
+});
+
+export const updateWorkflowSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  description: z.string().optional(),
+  nodes: z.array(nodeSchema).optional(),
+  edges: z.array(edgeSchema).optional(),
+  status: z.enum(['draft', 'published', 'paused']).optional(),
+  changeSummary: z.string().optional(),
+});
+
+export const runWorkflowSchema = z.object({
+  input: z.record(z.any()).optional().default({}),
+  triggerType: z.enum(['manual', 'webhook', 'cron']).default('manual'),
+});
+
+export const createTriggerSchema = z.object({
+  workflowId: z.string().min(1, 'Workflow ID is required'),
+  name: z.string().min(1, 'Trigger name is required'),
+  kind: z.enum(['webhook', 'cron', 'manual']),
+  enabled: z.boolean().default(true),
+  cronExpression: z.string().optional(),
+  webhookPath: z.string().optional(),
+  webhookSecret: z.string().optional(),
+  config: z.record(z.any()).optional(),
+});
+
+export const updateTriggerSchema = z.object({
+  name: z.string().min(1).optional(),
+  enabled: z.boolean().optional(),
+  cronExpression: z.string().optional(),
+  webhookPath: z.string().optional(),
+  webhookSecret: z.string().optional(),
+  config: z.record(z.any()).optional(),
+});
+
+export const applicationSettingSchema = z.object({
+  key: z.string().min(1),
+  value: z.any(),
+  category: z.string().default('general'),
+  description: z.string().optional(),
+});
