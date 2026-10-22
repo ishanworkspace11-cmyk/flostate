@@ -8,12 +8,24 @@ export class ExecutionController {
       const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 20;
       const workflowId = req.query.workflowId ? String(req.query.workflowId) : undefined;
       const status = req.query.status ? String(req.query.status) : undefined;
+      const triggerType = req.query.triggerType ? String(req.query.triggerType) : undefined;
+      const startDate = req.query.startDate ? String(req.query.startDate) : undefined;
+      const endDate = req.query.endDate ? String(req.query.endDate) : undefined;
+      const search = req.query.search ? String(req.query.search) : undefined;
+      const sortBy = (req.query.sortBy as any) || 'startedAt';
+      const sortOrder = (req.query.sortOrder as any) || 'desc';
 
       const { executions, total } = await executionService.listExecutions({
         page,
         limit,
         workflowId,
         status,
+        triggerType,
+        startDate,
+        endDate,
+        search,
+        sortBy,
+        sortOrder,
       });
 
       res.status(200).json({
@@ -23,7 +35,7 @@ export class ExecutionController {
           page,
           limit,
           total,
-          totalPages: Math.ceil(total / limit),
+          totalPages: Math.ceil(total / limit) || 1,
         },
       });
     } catch (err) {

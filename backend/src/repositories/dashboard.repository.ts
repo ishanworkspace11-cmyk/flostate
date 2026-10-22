@@ -200,7 +200,7 @@ export class DashboardRepository {
 
     // In-memory fallback
     const allWorkflows = await store.listWorkflows();
-    const allExecutions = await store.listExecutions();
+    const allExecutions = await store.getAllExecutions();
 
     const totalWorkflows = allWorkflows.length;
     const activeWorkflows = allWorkflows.filter((w) => w.status === 'published').length;

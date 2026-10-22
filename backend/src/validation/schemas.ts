@@ -87,3 +87,16 @@ export const applicationSettingSchema = z.object({
   category: z.string().default('general'),
   description: z.string().optional(),
 });
+
+export const runsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  workflowId: z.string().optional(),
+  status: z.string().optional(),
+  triggerType: z.string().optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  search: z.string().optional(),
+  sortBy: z.enum(['startedAt', 'completedAt', 'durationMs', 'status', 'workflowName']).optional().default('startedAt'),
+  sortOrder: z.enum(['asc', 'desc']).optional().default('desc'),
+});

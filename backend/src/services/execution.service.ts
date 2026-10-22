@@ -3,12 +3,12 @@ import { workflowRepository } from '../repositories/workflow.repository.js';
 import { auditRepository } from '../repositories/audit.repository.js';
 import { BackendExecutionEngine } from '../engine/dag.engine.js';
 import { durableDagOrchestrator } from '../engine/durable-dag.orchestrator.js';
-import { Execution, NodeExecution } from '../models/execution.types.js';
+import { Execution, NodeExecution, ExecutionSummary, ExecutionListFilters } from '../models/execution.types.js';
 import { Workflow } from '../models/workflow.types.js';
 import { createError } from '../middleware/error.middleware.js';
 
 export class ExecutionService {
-  async listExecutions(filters?: { workflowId?: string; status?: string; page?: number; limit?: number }) {
+  async listExecutions(filters?: ExecutionListFilters): Promise<{ executions: ExecutionSummary[]; total: number }> {
     return executionRepository.list(filters);
   }
 

@@ -1,6 +1,6 @@
 import { prisma } from '../database/prisma.js';
 import { isDatabaseAvailable } from '../database/db-status.js';
-import { Execution, NodeExecution } from '../models/execution.types.js';
+import { Execution, NodeExecution, ExecutionSummary, ExecutionListFilters } from '../models/execution.types.js';
 import { store } from '../services/store.service.js';
 import { logger } from '../config/logger.js';
 import { ExecutionStatus as PrismaExecutionStatus } from '@prisma/client';
@@ -10,49 +10,69 @@ export class ExecutionRepository {
     return isDatabaseAvailable();
   }
 
-  async list(filters?: { workflowId?: string; status?: string; page?: number; limit?: number }): Promise<{ executions: Execution[]; total: number }> {
+  async list(filters?: ExecutionListFilters): Promise<{ executions: ExecutionSummary[]; total: number }> {
     const hasDb = await ExecutionRepository.checkDb();
     if (hasDb) {
       try {
         const where: any = {};
         if (filters?.workflowId) where.workflowId = filters.workflowId;
-        if (filters?.status) where.status = filters.status.toUpperCase() as PrismaExecutionStatus;
+        if (filters?.status && filters.status !== 'all') {
+          where.status = filters.status.toUpperCase() as PrismaExecutionStatus;
+        }
+        if (filters?.triggerType && filters.triggerType !== 'all') {
+          where.triggerType = { equals: filters.triggerType, mode: 'insensitive' };
+        }
 
-        const page = filters?.page || 1;
-        const limit = filters?.limit || 20;
+        if (filters?.startDate || filters?.endDate) {
+          where.startedAt = {};
+          if (filters.startDate) {
+            const startD = new Date(filters.startDate);
+            if (!isNaN(startD.getTime())) where.startedAt.gte = startD;
+          }
+          if (filters.endDate) {
+            const endD = new Date(filters.endDate);
+            if (!isNaN(endD.getTime())) where.startedAt.lte = endD;
+          }
+        }
+
+        if (filters?.search) {
+          where.OR = [
+            { workflowName: { contains: filters.search, mode: 'insensitive' } },
+            { id: { contains: filters.search, mode: 'insensitive' } },
+            { error: { contains: filters.search, mode: 'insensitive' } },
+          ];
+        }
+
+        const allowedSortFields = ['startedAt', 'completedAt', 'durationMs', 'status', 'workflowName'];
+        const sortField = allowedSortFields.includes(filters?.sortBy || '') ? filters!.sortBy! : 'startedAt';
+        const sortDirection = filters?.sortOrder === 'asc' ? 'asc' : 'desc';
+        const orderBy = { [sortField]: sortDirection };
+
+        const page = Math.max(1, filters?.page || 1);
+        const limit = Math.min(100, Math.max(1, filters?.limit || 20));
         const skip = (page - 1) * limit;
 
         const [records, total] = await Promise.all([
           prisma.execution.findMany({
             where,
-            include: { nodeExecutions: true },
-            orderBy: { startedAt: 'desc' },
+            include: {
+              nodeExecutions: {
+                select: {
+                  id: true,
+                  status: true,
+                },
+              },
+            },
+            orderBy,
             skip,
             take: limit,
           }),
           prisma.execution.count({ where }),
         ]);
 
-        const executions: Execution[] = records.map((r) => {
-          const nodeExecMap: Record<string, NodeExecution> = {};
-          r.nodeExecutions.forEach((ne) => {
-            nodeExecMap[ne.nodeId] = {
-              id: ne.id,
-              executionId: ne.executionId,
-              nodeId: ne.nodeId,
-              nodeLabel: ne.nodeLabel,
-              nodeType: ne.nodeType as any,
-              status: (ne.status.charAt(0).toUpperCase() + ne.status.slice(1).toLowerCase()) as any,
-              attempt: ne.attempt,
-              input: ne.input,
-              output: ne.output,
-              error: ne.error,
-              startedAt: ne.startedAt?.toISOString() || null,
-              completedAt: ne.completedAt?.toISOString() || null,
-              durationMs: ne.durationMs || undefined,
-              logs: (ne.logs as any) || [],
-            };
-          });
+        const executions: ExecutionSummary[] = records.map((r) => {
+          const nodeCount = r.nodeExecutions.length;
+          const completedNodeCount = r.nodeExecutions.filter((ne) => ne.status === 'SUCCEEDED').length;
 
           return {
             id: r.id,
@@ -61,13 +81,12 @@ export class ExecutionRepository {
             workflowVersion: r.workflowVersion,
             triggerType: r.triggerType,
             status: (r.status.charAt(0).toUpperCase() + r.status.slice(1).toLowerCase()) as any,
-            input: (r.input as any) || {},
-            output: (r.output as any) || null,
             startedAt: r.startedAt.toISOString(),
             completedAt: r.completedAt?.toISOString() || null,
             durationMs: r.durationMs || undefined,
             error: r.error,
-            nodeExecutions: nodeExecMap,
+            nodeCount,
+            completedNodeCount,
           };
         });
 
@@ -77,20 +96,7 @@ export class ExecutionRepository {
       }
     }
 
-    let all = await store.listExecutions();
-    if (filters?.workflowId) {
-      all = all.filter((e) => e.workflowId === filters.workflowId);
-    }
-    if (filters?.status) {
-      all = all.filter((e) => e.status.toLowerCase() === filters.status!.toLowerCase());
-    }
-    const page = filters?.page || 1;
-    const limit = filters?.limit || 20;
-    const start = (page - 1) * limit;
-    return {
-      executions: all.slice(start, start + limit),
-      total: all.length,
-    };
+    return store.listExecutions(filters);
   }
 
   async findById(id: string): Promise<Execution | null> {

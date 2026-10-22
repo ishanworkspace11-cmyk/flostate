@@ -236,12 +236,29 @@ class DormammuApiClient {
   }
 
   // Executions (Runs)
-  async listExecutions(params?: { page?: number; limit?: number; workflowId?: string; status?: string }) {
+  async listExecutions(params?: {
+    page?: number;
+    limit?: number;
+    workflowId?: string;
+    status?: string;
+    triggerType?: string;
+    startDate?: string;
+    endDate?: string;
+    search?: string;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+  }) {
     const query = new URLSearchParams();
     if (params?.page) query.append('page', String(params.page));
     if (params?.limit) query.append('limit', String(params.limit));
     if (params?.workflowId) query.append('workflowId', params.workflowId);
-    if (params?.status) query.append('status', params.status);
+    if (params?.status && params.status !== 'all') query.append('status', params.status);
+    if (params?.triggerType && params.triggerType !== 'all') query.append('triggerType', params.triggerType);
+    if (params?.startDate) query.append('startDate', params.startDate);
+    if (params?.endDate) query.append('endDate', params.endDate);
+    if (params?.search) query.append('search', params.search);
+    if (params?.sortBy) query.append('sortBy', params.sortBy);
+    if (params?.sortOrder) query.append('sortOrder', params.sortOrder);
     const qs = query.toString() ? `?${query.toString()}` : '';
     return this.request<any[]>(`/runs${qs}`);
   }

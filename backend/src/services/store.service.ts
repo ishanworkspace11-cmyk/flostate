@@ -1,5 +1,5 @@
 import { Workflow, WorkflowNode, WorkflowEdge } from '../models/workflow.types.js';
-import { Execution, NodeExecution } from '../models/execution.types.js';
+import { Execution, NodeExecution, ExecutionSummary, ExecutionListFilters } from '../models/execution.types.js';
 import { WorkflowTrigger } from '../models/trigger.types.js';
 import { WorkerInstance, WorkerQueueSummary } from '../models/worker.types.js';
 
@@ -345,10 +345,94 @@ class BackendStore {
   }
 
   // Executions
-  async listExecutions(): Promise<Execution[]> {
-    return Array.from(this.executions.values()).sort(
-      (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
-    );
+  async getAllExecutions(): Promise<Execution[]> {
+    return Array.from(this.executions.values());
+  }
+
+  async listExecutions(filters?: ExecutionListFilters): Promise<{ executions: ExecutionSummary[]; total: number }> {
+    let all = Array.from(this.executions.values());
+
+    if (filters?.workflowId) {
+      all = all.filter((e) => e.workflowId === filters.workflowId);
+    }
+    if (filters?.status && filters.status !== 'all') {
+      all = all.filter((e) => e.status.toLowerCase() === filters.status!.toLowerCase());
+    }
+    if (filters?.triggerType && filters.triggerType !== 'all') {
+      all = all.filter((e) => e.triggerType.toLowerCase() === filters.triggerType!.toLowerCase());
+    }
+    if (filters?.startDate) {
+      const startMs = new Date(filters.startDate).getTime();
+      if (!isNaN(startMs)) {
+        all = all.filter((e) => new Date(e.startedAt).getTime() >= startMs);
+      }
+    }
+    if (filters?.endDate) {
+      const endMs = new Date(filters.endDate).getTime();
+      if (!isNaN(endMs)) {
+        all = all.filter((e) => new Date(e.startedAt).getTime() <= endMs);
+      }
+    }
+    if (filters?.search) {
+      const q = filters.search.toLowerCase();
+      all = all.filter(
+        (e) =>
+          e.id.toLowerCase().includes(q) ||
+          e.workflowName.toLowerCase().includes(q) ||
+          (e.error && e.error.toLowerCase().includes(q))
+      );
+    }
+
+    const sortBy = filters?.sortBy || 'startedAt';
+    const sortOrder = filters?.sortOrder || 'desc';
+    all.sort((a, b) => {
+      const valA: any = a[sortBy as keyof Execution];
+      const valB: any = b[sortBy as keyof Execution];
+
+      if (sortBy === 'startedAt' || sortBy === 'completedAt') {
+        const timeA = valA ? new Date(valA).getTime() : 0;
+        const timeB = valB ? new Date(valB).getTime() : 0;
+        return sortOrder === 'asc' ? timeA - timeB : timeB - timeA;
+      }
+
+      if (sortBy === 'durationMs') {
+        const numA = typeof valA === 'number' ? valA : (sortOrder === 'asc' ? Infinity : -1);
+        const numB = typeof valB === 'number' ? valB : (sortOrder === 'asc' ? Infinity : -1);
+        return sortOrder === 'asc' ? numA - numB : numB - numA;
+      }
+
+      const strA = String(valA ?? '');
+      const strB = String(valB ?? '');
+      return sortOrder === 'asc' ? strA.localeCompare(strB) : strB.localeCompare(strA);
+    });
+
+    const page = Math.max(1, filters?.page || 1);
+    const limit = Math.min(100, Math.max(1, filters?.limit || 20));
+    const start = (page - 1) * limit;
+    const paginated = all.slice(start, start + limit);
+
+    const summaries: ExecutionSummary[] = paginated.map((e) => {
+      const nodeVals = Object.values(e.nodeExecutions || {});
+      return {
+        id: e.id,
+        workflowId: e.workflowId,
+        workflowName: e.workflowName,
+        workflowVersion: e.workflowVersion,
+        triggerType: e.triggerType,
+        status: e.status,
+        startedAt: e.startedAt,
+        completedAt: e.completedAt,
+        durationMs: e.durationMs,
+        error: e.error,
+        nodeCount: nodeVals.length,
+        completedNodeCount: nodeVals.filter((n) => n.status === 'Succeeded').length,
+      };
+    });
+
+    return {
+      executions: summaries,
+      total: all.length,
+    };
   }
 
   async getExecution(id: string): Promise<Execution | null> {

@@ -6,6 +6,7 @@ import { ExecutionTimeline } from '../components/executions/ExecutionTimeline';
 import { PayloadViewer } from '../components/executions/PayloadViewer';
 import { LogViewer } from '../components/executions/LogViewer';
 import { ExecutionService } from '../features/executions/execution.service';
+import { apiClient } from '../lib/api-client';
 import { WorkflowService } from '../features/workflows/workflow.service';
 import { Execution, NodeExecution } from '../features/executions/execution.types';
 import { formatDate, formatDuration } from '../lib/date';
@@ -30,28 +31,69 @@ export const RunDetailsPage: React.FC = () => {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const loadExecution = async (id: string) => {
+    try {
+      const res = await apiClient.getExecution(id);
+      if (res.success && res.data) {
+        setExecution(res.data);
+        if (res.data.nodeExecutions && Object.keys(res.data.nodeExecutions).length > 0) {
+          const nodes = Object.values(res.data.nodeExecutions) as NodeExecution[];
+          const failingNode = nodes.find((n) => n.status === 'Failed');
+          setSelectedNodeId((prev) => prev || (failingNode ? failingNode.nodeId : nodes[0].nodeId));
+        }
+        return;
+      }
+    } catch (_err) {}
+
+    // Fallback to local storage
+    const localData = ExecutionService.getExecution(id);
+    setExecution(localData);
+    if (localData && Object.keys(localData.nodeExecutions).length > 0) {
+      const nodes = Object.values(localData.nodeExecutions);
+      const failingNode = nodes.find((n) => n.status === 'Failed');
+      setSelectedNodeId((prev) => prev || (failingNode ? failingNode.nodeId : nodes[0].nodeId));
+    }
+  };
 
   useEffect(() => {
     if (runId) {
-      loadExecution(runId);
+      setLoading(true);
+      loadExecution(runId).finally(() => setLoading(false));
     }
   }, [runId]);
 
-  const loadExecution = (id: string) => {
-    const data = ExecutionService.getExecution(id);
-    setExecution(data);
-    if (data && Object.keys(data.nodeExecutions).length > 0) {
-      // Default selected node to first failing node or first node
-      const nodes = Object.values(data.nodeExecutions);
-      const failingNode = nodes.find((n) => n.status === 'Failed');
-      setSelectedNodeId(failingNode ? failingNode.nodeId : nodes[0].nodeId);
+  // Polling if execution is actively running
+  useEffect(() => {
+    if (!runId || !execution || !['Running', 'Pending', 'Ready'].includes(execution.status)) {
+      return;
     }
-  };
+
+    const timer = setInterval(() => {
+      loadExecution(runId);
+    }, 2000);
+
+    return () => clearInterval(timer);
+  }, [runId, execution?.status]);
 
   const handleRetry = async () => {
     if (!execution || isRetrying) return;
     try {
       setIsRetrying(true);
+
+      // Attempt server retry first
+      try {
+        const retryRes = await apiClient.retryRun(execution.id);
+        if (retryRes.success && retryRes.data) {
+          setToastMessage(`Retry initiated on worker! Refreshing status...`);
+          await loadExecution(execution.id);
+          setTimeout(() => setToastMessage(null), 3000);
+          return;
+        }
+      } catch (_serverErr) {}
+
+      // Fallback local retry
       const newRun = await ExecutionService.retryExecution(execution.id, {
         maxDelayMs: 600,
       });

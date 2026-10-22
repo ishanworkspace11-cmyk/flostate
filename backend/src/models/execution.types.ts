@@ -48,3 +48,31 @@ export interface Execution {
   error?: string | null;
   nodeExecutions: Record<string, NodeExecution>;
 }
+
+export interface ExecutionSummary {
+  id: string;
+  workflowId: string;
+  workflowName: string;
+  workflowVersion: number;
+  triggerType: string;
+  status: ExecutionStatus;
+  startedAt: string;
+  completedAt?: string | null;
+  durationMs?: number;
+  error?: string | null;
+  nodeCount: number;
+  completedNodeCount: number;
+}
+
+export interface ExecutionListFilters {
+  page?: number;
+  limit?: number;
+  workflowId?: string;
+  status?: string;
+  triggerType?: string;
+  startDate?: string;
+  endDate?: string;
+  search?: string;
+  sortBy?: 'startedAt' | 'completedAt' | 'durationMs' | 'status' | 'workflowName';
+  sortOrder?: 'asc' | 'desc';
+}

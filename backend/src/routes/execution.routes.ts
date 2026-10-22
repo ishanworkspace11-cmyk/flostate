@@ -5,7 +5,7 @@ import { BackendExecutionEngine } from '../engine/dag.engine.js';
 export const executionRouter = Router();
 
 executionRouter.get('/', async (req: Request, res: Response) => {
-  const executions = await store.listExecutions();
+  const { executions } = await store.listExecutions();
   res.json({ executions });
 });
 
