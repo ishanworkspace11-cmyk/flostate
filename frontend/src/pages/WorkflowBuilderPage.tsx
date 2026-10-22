@@ -15,6 +15,7 @@ import { WorkflowCanvas } from '../components/editor/WorkflowCanvas';
 import { NodePalette } from '../components/editor/NodePalette';
 import { NodeConfigPanel } from '../components/editor/NodeConfigPanel';
 import { ValidationResults } from '../components/editor/ValidationResults';
+import { apiClient } from '../lib/api-client';
 import { WorkflowService } from '../features/workflows/workflow.service';
 import { ExecutionService } from '../features/executions/execution.service';
 import { validateWorkflow } from '../features/workflows/workflow.validation';
@@ -84,33 +85,67 @@ export const WorkflowBuilderPage: React.FC = () => {
 
   // Load workflow on mount or route param change
   useEffect(() => {
-    let targetWf: Workflow | null = null;
-    if (workflowId) {
-      targetWf = WorkflowService.getWorkflow(workflowId);
-    }
+    let isCancelled = false;
 
-    if (!targetWf) {
+    async function load() {
+      let targetWf: Workflow | null = null;
       if (workflowId) {
-        // ID was requested but not found
-        const list = WorkflowService.listWorkflows();
-        targetWf = list.length > 0 ? list[0] : WorkflowService.createWorkflow({ name: 'Default DAG Workflow' });
-        navigate(`/builder/${targetWf.id}`, { replace: true });
-      } else {
-        // Plain /builder path -> initialize a fresh new workflow
-        targetWf = WorkflowService.createWorkflow({
-          name: `Pipeline_${Math.floor(Math.random() * 900 + 100)}`,
-          description: 'Newly created DAG automation pipeline',
-        });
-        navigate(`/builder/${targetWf.id}`, { replace: true });
+        try {
+          const res = await apiClient.getWorkflow(workflowId);
+          if (res.success && res.data) {
+            targetWf = res.data;
+          }
+        } catch (_e) {}
+        if (!targetWf) {
+          targetWf = WorkflowService.getWorkflow(workflowId);
+        }
+      }
+
+      if (!targetWf) {
+        if (workflowId) {
+          try {
+            const listRes = await apiClient.listWorkflows();
+            if (listRes.success && listRes.data && listRes.data.length > 0) {
+              targetWf = listRes.data[0];
+            }
+          } catch (_e) {}
+          if (!targetWf) {
+            const list = WorkflowService.listWorkflows();
+            targetWf = list.length > 0 ? list[0] : WorkflowService.createWorkflow({ name: 'Default DAG Workflow' });
+          }
+          if (!isCancelled) navigate(`/builder/${targetWf.id}`, { replace: true });
+        } else {
+          try {
+            const createRes = await apiClient.createWorkflow({
+              name: `Pipeline_${Math.floor(Math.random() * 900 + 100)}`,
+              description: 'Newly created DAG automation pipeline',
+            });
+            if (createRes.success && createRes.data) {
+              targetWf = createRes.data;
+            }
+          } catch (_e) {}
+          if (!targetWf) {
+            targetWf = WorkflowService.createWorkflow({
+              name: `Pipeline_${Math.floor(Math.random() * 900 + 100)}`,
+              description: 'Newly created DAG automation pipeline',
+            });
+          }
+          if (!isCancelled) navigate(`/builder/${targetWf.id}`, { replace: true });
+        }
+      }
+
+      if (targetWf && !isCancelled) {
+        setWorkflow(targetWf);
+        setWorkflowName(targetWf.name);
+        loadGraphFromWorkflow(targetWf);
+        setHasUnsavedChanges(false);
       }
     }
 
-    if (targetWf) {
-      setWorkflow(targetWf);
-      setWorkflowName(targetWf.name);
-      loadGraphFromWorkflow(targetWf);
-      setHasUnsavedChanges(false);
-    }
+    load();
+    return () => {
+      isCancelled = true;
+    };
   }, [workflowId, navigate]);
 
   // Convert workflow model into React Flow nodes & edges
@@ -309,22 +344,48 @@ export const WorkflowBuilderPage: React.FC = () => {
   };
 
   // Save workflow
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!workflow) return;
     const currentWf = getCurrentWorkflowObject();
-    const updated = WorkflowService.updateWorkflow(workflow.id, {
-      name: currentWf.name,
-      nodes: currentWf.nodes,
-      edges: currentWf.edges,
-    });
-    setWorkflow(updated);
-    setHasUnsavedChanges(false);
-    setToastMessage({ text: 'Workflow saved successfully.', type: 'success' });
-    setTimeout(() => setToastMessage(null), 2500);
+
+    try {
+      const res = await apiClient.updateWorkflow(workflow.id, {
+        name: currentWf.name,
+        nodes: currentWf.nodes,
+        edges: currentWf.edges,
+        expectedVersion: workflow.draftVersion,
+      });
+
+      if (res.success && res.data) {
+        setWorkflow(res.data);
+        WorkflowService.updateWorkflow(workflow.id, res.data);
+        setHasUnsavedChanges(false);
+        setToastMessage({ text: `Workflow saved (v${res.data.draftVersion}).`, type: 'success' });
+        setTimeout(() => setToastMessage(null), 2500);
+        return;
+      } else {
+        throw new Error(res.error?.message || 'Server rejected save');
+      }
+    } catch (err: any) {
+      if (err.message?.includes('Conflict')) {
+        setToastMessage({ text: `Save conflict: ${err.message}`, type: 'error' });
+      } else {
+        // Fallback local save
+        const updated = WorkflowService.updateWorkflow(workflow.id, {
+          name: currentWf.name,
+          nodes: currentWf.nodes,
+          edges: currentWf.edges,
+        });
+        setWorkflow(updated);
+        setHasUnsavedChanges(false);
+        setToastMessage({ text: 'Workflow saved locally (backend offline).', type: 'success' });
+      }
+      setTimeout(() => setToastMessage(null), 3000);
+    }
   };
 
   // Publish workflow
-  const handlePublish = () => {
+  const handlePublish = async () => {
     if (!workflow) return;
     const currentWf = getCurrentWorkflowObject();
     const result = validateWorkflow(currentWf);
@@ -335,17 +396,30 @@ export const WorkflowBuilderPage: React.FC = () => {
       return;
     }
 
-    // Save and publish
-    WorkflowService.updateWorkflow(workflow.id, {
-      name: currentWf.name,
-      nodes: currentWf.nodes,
-      edges: currentWf.edges,
-    });
-    const published = WorkflowService.publishWorkflow(workflow.id);
-    setWorkflow(published);
-    setHasUnsavedChanges(false);
-    setToastMessage({ text: `Workflow published as v${published.publishedVersion}!`, type: 'success' });
-    setTimeout(() => setToastMessage(null), 3000);
+    try {
+      // 1. Save graph first
+      await apiClient.updateWorkflow(workflow.id, {
+        name: currentWf.name,
+        nodes: currentWf.nodes,
+        edges: currentWf.edges,
+      });
+
+      // 2. Publish
+      const pubRes = await apiClient.publishWorkflow(workflow.id);
+      if (pubRes.success && pubRes.data) {
+        setWorkflow(pubRes.data);
+        WorkflowService.updateWorkflow(workflow.id, pubRes.data);
+        setHasUnsavedChanges(false);
+        setToastMessage({ text: `Workflow published as v${pubRes.data.publishedVersion}!`, type: 'success' });
+        setTimeout(() => setToastMessage(null), 3000);
+        return;
+      } else {
+        throw new Error(pubRes.error?.message || 'Publishing failed on server');
+      }
+    } catch (err: any) {
+      setToastMessage({ text: `Publish error: ${err.message}`, type: 'error' });
+      setTimeout(() => setToastMessage(null), 3500);
+    }
   };
 
   // Test Run: Executes the DAG with live step animation on the canvas!

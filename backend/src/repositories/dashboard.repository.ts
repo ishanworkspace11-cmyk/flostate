@@ -27,7 +27,7 @@ export interface DashboardSummaryData {
     id: string;
     name: string;
     description: string;
-    status: 'draft' | 'published' | 'paused';
+    status: 'draft' | 'published' | 'paused' | 'archived';
     draftVersion: number;
     publishedVersion?: number;
     nodeCount: number;

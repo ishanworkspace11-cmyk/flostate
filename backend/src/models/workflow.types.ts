@@ -1,4 +1,4 @@
-export type WorkflowStatus = 'draft' | 'published' | 'paused';
+export type WorkflowStatus = 'draft' | 'published' | 'paused' | 'archived';
 
 export type NodeType = 'trigger' | 'transform' | 'httpRequest' | 'delay' | 'webhookAction';
 
@@ -82,6 +82,7 @@ export interface Workflow {
   status: WorkflowStatus;
   draftVersion: number;
   publishedVersion?: number;
+  isArchived?: boolean;
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   createdAt: string;

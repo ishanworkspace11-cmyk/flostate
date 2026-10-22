@@ -39,7 +39,7 @@ export interface DashboardSummary {
     id: string;
     name: string;
     description: string;
-    status: 'draft' | 'published' | 'paused';
+    status: 'draft' | 'published' | 'paused' | 'archived';
     draftVersion: number;
     publishedVersion?: number;
     nodeCount: number;
@@ -150,10 +150,19 @@ class DormammuApiClient {
   }
 
   // Workflows
-  async listWorkflows(params?: { search?: string; status?: string }) {
+  async listWorkflows(params?: {
+    search?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+    includeArchived?: boolean;
+  }) {
     const query = new URLSearchParams();
     if (params?.search) query.append('search', params.search);
     if (params?.status) query.append('status', params.status);
+    if (params?.page) query.append('page', String(params.page));
+    if (params?.limit) query.append('limit', String(params.limit));
+    if (params?.includeArchived) query.append('includeArchived', 'true');
     const qs = query.toString() ? `?${query.toString()}` : '';
     return this.request<any[]>(`/workflows${qs}`);
   }
@@ -171,8 +180,15 @@ class DormammuApiClient {
 
   async updateWorkflow(id: string, workflow: any) {
     return this.request<any>(`/workflows/${id}`, {
-      method: 'PUT',
+      method: 'PATCH',
       body: JSON.stringify(workflow),
+    });
+  }
+
+  async duplicateWorkflow(id: string, name?: string) {
+    return this.request<any>(`/workflows/${id}/duplicate`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
     });
   }
 
@@ -182,17 +198,41 @@ class DormammuApiClient {
     });
   }
 
-  async deleteWorkflow(id: string) {
-    return this.request<{ message: string }>(`/workflows/${id}`, {
-      method: 'DELETE',
+  async activateWorkflow(id: string) {
+    return this.request<any>(`/workflows/${id}/activate`, {
+      method: 'POST',
     });
   }
 
-  async validateWorkflow(workflow: any) {
-    return this.request<{ isValid: boolean; errors: any[]; warnings: any[] }>('/workflows/validate', {
+  async pauseWorkflow(id: string) {
+    return this.request<any>(`/workflows/${id}/pause`, {
       method: 'POST',
-      body: JSON.stringify(workflow),
     });
+  }
+
+  async deleteWorkflow(id: string) {
+    return this.request<{ deleted: boolean; archived: boolean; message: string; executionCount: number }>(
+      `/workflows/${id}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  }
+
+  async validateWorkflow(workflowOrId: any) {
+    if (typeof workflowOrId === 'string') {
+      return this.request<{ isValid: boolean; errors: any[]; warnings: any[]; topologicalOrder?: string[] }>(
+        `/workflows/${workflowOrId}/validate`,
+        { method: 'POST' }
+      );
+    }
+    return this.request<{ isValid: boolean; errors: any[]; warnings: any[]; topologicalOrder?: string[] }>(
+      '/workflows/validate',
+      {
+        method: 'POST',
+        body: JSON.stringify(workflowOrId),
+      }
+    );
   }
 
   // Executions (Runs)

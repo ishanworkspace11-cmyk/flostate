@@ -176,6 +176,12 @@ class BackendStore {
     const updated: Workflow = {
       ...existing,
       ...updates,
+      publishedVersion:
+        updates.status === 'published'
+          ? updates.publishedVersion ?? existing.publishedVersion ?? existing.draftVersion
+          : updates.publishedVersion !== undefined
+          ? updates.publishedVersion
+          : existing.publishedVersion,
       draftVersion: updates.nodes || updates.edges ? existing.draftVersion + 1 : existing.draftVersion,
       updatedAt: new Date().toISOString(),
     };
@@ -185,6 +191,67 @@ class BackendStore {
 
   async deleteWorkflow(id: string): Promise<boolean> {
     return this.workflows.delete(id);
+  }
+
+  async duplicateWorkflow(id: string, newName?: string): Promise<Workflow> {
+    const source = this.workflows.get(id);
+    if (!source) throw new Error(`Workflow ${id} not found`);
+
+    const nodeIdMap = new Map<string, string>();
+    const newNodes = source.nodes.map((node) => {
+      const newId = generateId('node');
+      nodeIdMap.set(node.id, newId);
+      return {
+        ...node,
+        id: newId,
+        config: JSON.parse(JSON.stringify(node.config || {})),
+      };
+    });
+
+    const newEdges = source.edges.map((edge) => ({
+      ...edge,
+      id: generateId('edge'),
+      source: nodeIdMap.get(edge.source) || edge.source,
+      target: nodeIdMap.get(edge.target) || edge.target,
+    }));
+
+    const duplicated: Workflow = {
+      id: generateId('wf'),
+      name: newName || `${source.name} (Copy)`,
+      description: source.description,
+      status: 'draft',
+      draftVersion: 1,
+      publishedVersion: undefined,
+      isArchived: false,
+      nodes: newNodes,
+      edges: newEdges,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.workflows.set(duplicated.id, duplicated);
+    return duplicated;
+  }
+
+  async archiveWorkflow(id: string): Promise<Workflow> {
+    const existing = this.workflows.get(id);
+    if (!existing) throw new Error(`Workflow ${id} not found`);
+
+    const archived: Workflow = {
+      ...existing,
+      status: 'archived',
+      isArchived: true,
+      updatedAt: new Date().toISOString(),
+    };
+    this.workflows.set(id, archived);
+    return archived;
+  }
+
+  async hasExecutions(workflowId: string): Promise<boolean> {
+    for (const exec of this.executions.values()) {
+      if (exec.workflowId === workflowId) return true;
+    }
+    return false;
   }
 
   // Executions

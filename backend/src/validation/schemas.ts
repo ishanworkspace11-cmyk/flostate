@@ -5,10 +5,18 @@ export const paginationQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
   search: z.string().optional(),
   status: z.string().optional(),
+  includeArchived: z.preprocess((val) => val === 'true' || val === true, z.boolean().default(false)),
 });
 
 export const idParamSchema = z.object({
-  id: z.string().min(1, 'ID is required'),
+  id: z.string().min(1, 'ID is required').optional(),
+  workflowId: z.string().min(1, 'Workflow ID is required').optional(),
+}).refine((data) => data.id || data.workflowId, {
+  message: 'Workflow ID or ID must be provided',
+});
+
+export const duplicateWorkflowSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
 });
 
 export const nodeSchema = z.object({
@@ -31,19 +39,20 @@ export const edgeSchema = z.object({
 });
 
 export const createWorkflowSchema = z.object({
-  name: z.string().min(1, 'Workflow name is required').max(100),
+  name: z.string().trim().min(1, 'Workflow name cannot be empty').max(100),
   description: z.string().optional().default(''),
   nodes: z.array(nodeSchema).default([]),
   edges: z.array(edgeSchema).default([]),
-  status: z.enum(['draft', 'published', 'paused']).default('draft'),
+  status: z.enum(['draft', 'published', 'paused', 'archived']).default('draft'),
 });
 
 export const updateWorkflowSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
+  name: z.string().trim().min(1, 'Workflow name cannot be empty').max(100).optional(),
   description: z.string().optional(),
   nodes: z.array(nodeSchema).optional(),
   edges: z.array(edgeSchema).optional(),
-  status: z.enum(['draft', 'published', 'paused']).optional(),
+  status: z.enum(['draft', 'published', 'paused', 'archived']).optional(),
+  expectedVersion: z.coerce.number().int().optional(),
   changeSummary: z.string().optional(),
 });
 

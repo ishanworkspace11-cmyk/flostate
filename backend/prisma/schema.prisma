@@ -11,6 +11,7 @@ enum WorkflowStatus {
   DRAFT
   PUBLISHED
   PAUSED
+  ARCHIVED
 }
 
 enum ExecutionStatus {
@@ -44,6 +45,7 @@ model Workflow {
   status           WorkflowStatus  @default(DRAFT)
   draftVersion     Int             @default(1)
   publishedVersion Int?
+  isArchived       Boolean         @default(false)
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
@@ -52,6 +54,7 @@ model Workflow {
   triggers         Trigger[]
 
   @@index([status])
+  @@index([isArchived])
   @@index([createdAt])
 }
 
