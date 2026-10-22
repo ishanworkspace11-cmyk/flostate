@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { healthRouter } from './health.routes.js';
+import { dashboardRouter } from './dashboard.routes.js';
 import { workflowRouter } from './workflow.routes.js';
 import { executionRouter } from './execution.routes.js';
 import { triggerRouter, webhookIngressRouter } from './trigger.routes.js';
@@ -16,6 +17,7 @@ apiV1Router.use((_req, res, next) => {
 });
 
 apiV1Router.use('/', healthRouter);
+apiV1Router.use('/dashboard', dashboardRouter);
 apiV1Router.use('/workflows', workflowRouter);
 apiV1Router.use('/runs', executionRouter);
 apiV1Router.use('/triggers', triggerRouter);

@@ -22,6 +22,55 @@ export interface ApiResponse<T = any> {
   };
 }
 
+export interface DashboardSummary {
+  totalWorkflows: number;
+  activeWorkflows: number;
+  draftWorkflows: number;
+  pausedWorkflows: number;
+  period: '24h' | '7d' | '30d' | 'all';
+  periodStart: string;
+  periodEnd: string;
+  totalExecutions: number;
+  successfulExecutions: number;
+  failedExecutions: number;
+  runningExecutions: number;
+  executionSuccessRate: number;
+  recentWorkflows: Array<{
+    id: string;
+    name: string;
+    description: string;
+    status: 'draft' | 'published' | 'paused';
+    draftVersion: number;
+    publishedVersion?: number;
+    nodeCount: number;
+    edgeCount: number;
+    updatedAt: string;
+    createdAt: string;
+  }>;
+  recentExecutions: Array<{
+    id: string;
+    workflowId: string;
+    workflowName: string;
+    workflowVersion: number;
+    triggerType: string;
+    status: 'Pending' | 'Ready' | 'Running' | 'Succeeded' | 'Failed' | 'Retrying' | 'Skipped';
+    startedAt: string;
+    completedAt?: string | null;
+    durationMs?: number;
+    error?: string | null;
+  }>;
+}
+
+export interface DashboardActivityItem {
+  id: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  actor: string;
+  details?: Record<string, any>;
+  createdAt: string;
+}
+
 class DormammuApiClient {
   private baseUrl: string;
 
@@ -85,6 +134,19 @@ class DormammuApiClient {
         redis: { status: 'up' | 'down'; latencyMs?: number };
       };
     }>('/ready');
+  }
+
+  // Dashboard
+  async getDashboardSummary(period: '24h' | '7d' | '30d' | 'all' = '24h') {
+    return this.request<DashboardSummary>(`/dashboard/summary?period=${period}`);
+  }
+
+  async getDashboardActivity(params?: { page?: number; limit?: number }) {
+    const query = new URLSearchParams();
+    if (params?.page) query.append('page', String(params.page));
+    if (params?.limit) query.append('limit', String(params.limit));
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    return this.request<DashboardActivityItem[]>(`/dashboard/activity${qs}`);
   }
 
   // Workflows
