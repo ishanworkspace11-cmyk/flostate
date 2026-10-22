@@ -7,7 +7,8 @@ export type ExecutionStatus =
   | 'Succeeded'
   | 'Failed'
   | 'Retrying'
-  | 'Skipped';
+  | 'Skipped'
+  | 'Cancelled';
 
 export interface ExecutionLogEntry {
   timestamp: string;
@@ -46,6 +47,8 @@ export interface Execution {
   completedAt?: string | null;
   durationMs?: number;
   error?: string | null;
+  retryOfRunId?: string | null;
+  retryAttempt?: number;
   nodeExecutions: Record<string, NodeExecution>; // keyed by nodeId
 }
 

@@ -4,6 +4,7 @@ import { store } from '../services/store.service.js';
 import { logger } from '../config/logger.js';
 import { auditRepository, AuditLogEntry } from './audit.repository.js';
 import { ExecutionStatus as PrismaExecutionStatus, WorkflowStatus as PrismaWorkflowStatus } from '@prisma/client';
+import { ExecutionStatus } from '../models/execution.types.js';
 
 export type TimePeriod = '24h' | '7d' | '30d' | 'all';
 
@@ -42,7 +43,7 @@ export interface DashboardSummaryData {
     workflowName: string;
     workflowVersion: number;
     triggerType: string;
-    status: 'Pending' | 'Ready' | 'Running' | 'Succeeded' | 'Failed' | 'Retrying' | 'Skipped';
+    status: ExecutionStatus;
     startedAt: string;
     completedAt?: string | null;
     durationMs?: number;

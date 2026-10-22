@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { executionService } from '../services/execution.service.js';
+import { executionEventBus, ExecutionEventPayload } from '../engine/execution-events.js';
 
 export class ExecutionController {
   public static async list(req: Request, res: Response, next: NextFunction) {
@@ -45,8 +46,8 @@ export class ExecutionController {
 
   public static async getById(req: Request, res: Response, next: NextFunction) {
     try {
-      const id = String(req.params.id);
-      const execution = await executionService.getExecution(id);
+      const runId = String(req.params.runId || req.params.id);
+      const execution = await executionService.getExecution(runId);
       res.status(200).json({
         success: true,
         data: execution,
@@ -58,11 +59,138 @@ export class ExecutionController {
 
   public static async getNodeExecutions(req: Request, res: Response, next: NextFunction) {
     try {
-      const id = String(req.params.id);
-      const nodes = await executionService.getNodeExecutions(id);
+      const runId = String(req.params.runId || req.params.id);
+      const nodes = await executionService.getNodeExecutions(runId);
       res.status(200).json({
         success: true,
         data: nodes,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public static async getNodeExecutionById(req: Request, res: Response, next: NextFunction) {
+    try {
+      const runId = String(req.params.runId || req.params.id);
+      const nodeExecutionId = String(req.params.nodeExecutionId);
+      const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 100;
+      const offset = req.query.offset ? parseInt(String(req.query.offset), 10) : 0;
+      const level = req.query.level ? String(req.query.level) : undefined;
+
+      const node = await executionService.getNodeExecution(runId, nodeExecutionId, {
+        limit,
+        offset,
+        level,
+      });
+
+      res.status(200).json({
+        success: true,
+        data: node,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public static async getRunEvents(req: Request, res: Response, next: NextFunction) {
+    try {
+      const runId = String(req.params.runId || req.params.id);
+      const initialRun = await executionService.getExecution(runId);
+
+      // Enforce connection limits per run
+      const allowed = executionEventBus.trackConnection(runId);
+      if (!allowed) {
+        res.status(429).json({
+          success: false,
+          error: {
+            code: 'TOO_MANY_CONNECTIONS',
+            message: `Too many active SSE connections for run ${runId}. Please reconnect shortly.`,
+          },
+        });
+        return;
+      }
+
+      // Configure SSE response headers
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+
+      const sendSse = (evt: ExecutionEventPayload) => {
+        res.write(`id: ${evt.id}\n`);
+        res.write(`event: ${evt.event}\n`);
+        res.write(`data: ${JSON.stringify(evt.data)}\n\n`);
+      };
+
+      // Send initial run state event
+      sendSse({
+        id: `evt_init_${Date.now()}`,
+        runId,
+        event: 'run_state',
+        timestamp: new Date().toISOString(),
+        data: initialRun,
+      });
+
+      // Reconnection & recovery: replay missed events after Last-Event-ID if requested
+      const lastEventId = (req.headers['last-event-id'] as string) || (req.query.lastEventId as string);
+      if (lastEventId) {
+        const missedEvents = executionEventBus.getEventsAfter(runId, lastEventId);
+        for (const missed of missedEvents) {
+          sendSse(missed);
+        }
+      }
+
+      // If execution has already reached a terminal state, finish stream cleanly
+      if (['Succeeded', 'Failed', 'Cancelled', 'Skipped'].includes(initialRun.status)) {
+        sendSse({
+          id: `evt_close_${Date.now()}`,
+          runId,
+          event: 'close',
+          timestamp: new Date().toISOString(),
+          data: {
+            status: initialRun.status,
+            durationMs: initialRun.durationMs,
+            completedAt: initialRun.completedAt,
+            message: `Execution ${runId} has finished with status ${initialRun.status}`,
+          },
+        });
+        executionEventBus.releaseConnection(runId);
+        res.end();
+        return;
+      }
+
+      // Subscribe to real-time events on the bus
+      const onEvent = (evt: ExecutionEventPayload) => {
+        try {
+          sendSse(evt);
+          if (evt.event === 'close') {
+            executionEventBus.releaseConnection(runId);
+            res.end();
+          }
+        } catch (_writeErr) {
+          executionEventBus.releaseConnection(runId);
+          executionEventBus.off(`run:${runId}`, onEvent);
+        }
+      };
+
+      executionEventBus.on(`run:${runId}`, onEvent);
+
+      // Heartbeat comment every 15s to keep intermediate reverse proxies alive
+      const keepAliveTimer = setInterval(() => {
+        try {
+          res.write(': keepalive\n\n');
+        } catch {
+          clearInterval(keepAliveTimer);
+        }
+      }, 15000);
+
+      // Clean up when client closes connection
+      req.on('close', () => {
+        clearInterval(keepAliveTimer);
+        executionEventBus.releaseConnection(runId);
+        executionEventBus.off(`run:${runId}`, onEvent);
       });
     } catch (err) {
       next(err);
@@ -90,8 +218,8 @@ export class ExecutionController {
 
   public static async retryRun(req: Request, res: Response, next: NextFunction) {
     try {
-      const id = String(req.params.id);
-      const execution = await executionService.retryExecution(id);
+      const runId = String(req.params.runId || req.params.id);
+      const execution = await executionService.retryExecution(runId);
       res.status(200).json({
         success: true,
         data: execution,

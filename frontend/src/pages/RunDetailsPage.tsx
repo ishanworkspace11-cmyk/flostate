@@ -7,7 +7,6 @@ import { PayloadViewer } from '../components/executions/PayloadViewer';
 import { LogViewer } from '../components/executions/LogViewer';
 import { ExecutionService } from '../features/executions/execution.service';
 import { apiClient } from '../lib/api-client';
-import { WorkflowService } from '../features/workflows/workflow.service';
 import { Execution, NodeExecution } from '../features/executions/execution.types';
 import { formatDate, formatDuration } from '../lib/date';
 import {
@@ -21,6 +20,8 @@ import {
   ArrowRight,
   ExternalLink,
   Loader2,
+  RefreshCw,
+  Info,
 } from 'lucide-react';
 
 export const RunDetailsPage: React.FC = () => {
@@ -32,6 +33,7 @@ export const RunDetailsPage: React.FC = () => {
   const [isRetrying, setIsRetrying] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isLiveConnected, setIsLiveConnected] = useState(false);
 
   const loadExecution = async (id: string) => {
     try {
@@ -64,50 +66,189 @@ export const RunDetailsPage: React.FC = () => {
     }
   }, [runId]);
 
-  // Polling if execution is actively running
+  // Real-time updates via Server-Sent Events (SSE) with reliable fallback polling
   useEffect(() => {
-    if (!runId || !execution || !['Running', 'Pending', 'Ready'].includes(execution.status)) {
+    if (!runId || !execution) return;
+    if (['Succeeded', 'Failed', 'Cancelled', 'Skipped'].includes(execution.status)) {
+      setIsLiveConnected(false);
       return;
     }
 
-    const timer = setInterval(() => {
-      loadExecution(runId);
-    }, 2000);
+    let eventSource: EventSource | null = null;
+    let pollTimer: any = null;
+    let isPolling = false;
 
-    return () => clearInterval(timer);
+    const startPolling = () => {
+      if (isPolling || pollTimer) return;
+      isPolling = true;
+      setIsLiveConnected(false);
+      pollTimer = setInterval(() => {
+        loadExecution(runId);
+      }, 2500);
+    };
+
+    try {
+      const url = apiClient.getRunEventsUrl(runId);
+      eventSource = new EventSource(url);
+
+      eventSource.onopen = () => {
+        setIsLiveConnected(true);
+      };
+
+      eventSource.addEventListener('run_state', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          setExecution((prev) => {
+            if (!prev) return payload;
+            return {
+              ...prev,
+              status: payload.status || prev.status,
+              durationMs: payload.durationMs !== undefined ? payload.durationMs : prev.durationMs,
+              completedAt: payload.completedAt !== undefined ? payload.completedAt : prev.completedAt,
+              error: payload.error !== undefined ? payload.error : prev.error,
+              output: payload.output !== undefined ? payload.output : prev.output,
+              nodeExecutions: payload.nodeExecutions || prev.nodeExecutions,
+            };
+          });
+        } catch {}
+      });
+
+      eventSource.addEventListener('node_state', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          setExecution((prev) => {
+            if (!prev || !payload.nodeId) return prev;
+            const existingNode = prev.nodeExecutions[payload.nodeId];
+            if (!existingNode) return prev;
+            return {
+              ...prev,
+              nodeExecutions: {
+                ...prev.nodeExecutions,
+                [payload.nodeId]: {
+                  ...existingNode,
+                  status: payload.status || existingNode.status,
+                  durationMs: payload.durationMs !== undefined ? payload.durationMs : existingNode.durationMs,
+                  output: payload.output !== undefined ? payload.output : existingNode.output,
+                  error: payload.error !== undefined ? payload.error : existingNode.error,
+                  attempt: payload.attempt !== undefined ? payload.attempt : existingNode.attempt,
+                },
+              },
+            };
+          });
+        } catch {}
+      });
+
+      eventSource.addEventListener('node_log', (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          if (!payload.nodeId || !payload.log) return;
+          setExecution((prev) => {
+            if (!prev) return prev;
+            const existingNode = prev.nodeExecutions[payload.nodeId];
+            if (!existingNode) return prev;
+            return {
+              ...prev,
+              nodeExecutions: {
+                ...prev.nodeExecutions,
+                [payload.nodeId]: {
+                  ...existingNode,
+                  logs: [...(existingNode.logs || []), payload.log],
+                },
+              },
+            };
+          });
+        } catch {}
+      });
+
+      eventSource.addEventListener('close', () => {
+        eventSource?.close();
+        setIsLiveConnected(false);
+        loadExecution(runId);
+      });
+
+      eventSource.onerror = () => {
+        eventSource?.close();
+        setIsLiveConnected(false);
+        startPolling();
+      };
+    } catch {
+      startPolling();
+    }
+
+    return () => {
+      eventSource?.close();
+      if (pollTimer) clearInterval(pollTimer);
+    };
   }, [runId, execution?.status]);
 
+  // Deep load node execution details when selected
+  useEffect(() => {
+    if (!runId || !selectedNodeId) return;
+    apiClient
+      .getNodeExecution(runId, selectedNodeId)
+      .then((res) => {
+        if (res.success && res.data) {
+          setExecution((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              nodeExecutions: {
+                ...prev.nodeExecutions,
+                [selectedNodeId]: {
+                  ...(prev.nodeExecutions[selectedNodeId] || {}),
+                  ...res.data,
+                },
+              },
+            };
+          });
+        }
+      })
+      .catch(() => {});
+  }, [runId, selectedNodeId]);
+
+  const canRetry = execution?.status === 'Failed';
+
   const handleRetry = async () => {
-    if (!execution || isRetrying) return;
+    if (!execution || !canRetry || isRetrying) return;
     try {
       setIsRetrying(true);
 
-      // Attempt server retry first
-      try {
-        const retryRes = await apiClient.retryRun(execution.id);
-        if (retryRes.success && retryRes.data) {
-          setToastMessage(`Retry initiated on worker! Refreshing status...`);
-          await loadExecution(execution.id);
-          setTimeout(() => setToastMessage(null), 3000);
-          return;
-        }
-      } catch (_serverErr) {}
+      // Call retry endpoint to create child retry execution
+      const retryRes = await apiClient.retryRun(execution.id);
+      if (retryRes.success && retryRes.data) {
+        const newRun = retryRes.data;
+        setToastMessage(`Retry run created: #${newRun.id.substring(0, 8)}`);
+        setTimeout(() => {
+          setToastMessage(null);
+          navigate(`/runs/${newRun.id}`);
+        }, 600);
+        return;
+      }
 
       // Fallback local retry
       const newRun = await ExecutionService.retryExecution(execution.id, {
         maxDelayMs: 600,
       });
-      setToastMessage(`Retry launched! New execution record: #${newRun.id.substring(0, 8)}`);
+      setToastMessage(`Retry launched: #${newRun.id.substring(0, 8)}`);
       setTimeout(() => {
         setToastMessage(null);
         navigate(`/runs/${newRun.id}`);
-      }, 1500);
+      }, 600);
     } catch (err: any) {
       alert(`Retry failed: ${err.message}`);
     } finally {
       setIsRetrying(false);
     }
   };
+
+  if (loading && !execution) {
+    return (
+      <div className="p-8 max-w-7xl mx-auto flex flex-col items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mb-3" />
+        <p className="text-xs font-medium text-slate-500">Loading execution trace...</p>
+      </div>
+    );
+  }
 
   if (!execution) {
     return (
@@ -116,11 +257,11 @@ export const RunDetailsPage: React.FC = () => {
           <AlertCircle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
           <h3 className="text-base font-semibold text-slate-900">Run Not Found</h3>
           <p className="text-xs text-slate-500 mt-1">
-            Execution ID "{runId}" could not be located in local persistence.
+            Execution ID "{runId}" could not be located in server persistence.
           </p>
           <button
             onClick={() => navigate('/runs')}
-            className="mt-4 px-4 py-2 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+            className="mt-4 px-4 py-2 text-xs font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition"
           >
             Back to Runs
           </button>
@@ -151,7 +292,17 @@ export const RunDetailsPage: React.FC = () => {
           { label: 'Runs', href: '/runs' },
           { label: execution.id.substring(0, 10) },
         ]}
-        badge={<StatusBadge status={execution.status} />}
+        badge={
+          <div className="flex items-center gap-2">
+            <StatusBadge status={execution.status} />
+            {isLiveConnected && (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Live SSE Stream
+              </span>
+            )}
+          </div>
+        }
         actions={
           <div className="flex items-center gap-2">
             <button
@@ -163,19 +314,47 @@ export const RunDetailsPage: React.FC = () => {
             </button>
             <button
               onClick={handleRetry}
-              disabled={isRetrying}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs transition disabled:opacity-50"
+              disabled={!canRetry || isRetrying}
+              title={
+                canRetry
+                  ? 'Retry failed DAG nodes in a new attempt'
+                  : `Cannot retry run in ${execution.status} status`
+              }
+              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold rounded-lg shadow-xs transition ${
+                canRetry
+                  ? 'text-white bg-indigo-600 hover:bg-indigo-700'
+                  : 'text-slate-400 bg-slate-100 cursor-not-allowed opacity-60'
+              }`}
             >
               {isRetrying ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <RotateCcw className="w-3.5 h-3.5" />
               )}
-              <span>{isRetrying ? 'Retrying DAG...' : 'Retry Run'}</span>
+              <span>{isRetrying ? 'Retrying DAG...' : canRetry ? 'Retry Run' : 'Retry (Eligible only if failed)'}</span>
             </button>
           </div>
         }
       />
+
+      {/* Retry Provenance Notice if this run was created as a retry */}
+      {execution.retryOfRunId && (
+        <div className="flex items-center justify-between p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <RotateCcw className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              This is retry attempt <strong>#{execution.retryAttempt || 2}</strong> of earlier failed execution:{' '}
+              <button
+                onClick={() => navigate(`/runs/${execution.retryOfRunId}`)}
+                className="font-mono font-bold underline hover:text-amber-950"
+              >
+                #{execution.retryOfRunId.substring(0, 10)}
+              </button>
+            </span>
+          </div>
+          <span className="text-[11px] text-amber-700">Original run history is fully preserved</span>
+        </div>
+      )}
 
       {/* Execution Metadata Overview */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-2xs text-xs">
@@ -220,13 +399,21 @@ export const RunDetailsPage: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left: Node Timeline List (5 cols) */}
         <div className="lg:col-span-5 bg-white rounded-xl border border-slate-200 p-5 shadow-2xs space-y-4">
-          <div>
-            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider font-mono">
-              DAG Step Sequence
-            </h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              Click a node to inspect its specific inputs, outputs, and log streams.
-            </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider font-mono">
+                DAG Step Sequence
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Click a node to inspect its specific inputs, outputs, and log streams.
+              </p>
+            </div>
+            {isLiveConnected && (
+              <span className="flex h-2 w-2 relative" title="Receiving live stream">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+            )}
           </div>
 
           <ExecutionTimeline
@@ -249,6 +436,7 @@ export const RunDetailsPage: React.FC = () => {
                   <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-500 font-mono">
                     <span>ID: {selectedNodeExec.nodeId}</span>
                     <span>Type: {selectedNodeExec.nodeType}</span>
+                    <span>Attempt: {selectedNodeExec.attempt || 1}</span>
                     <span>Duration: {formatDuration(selectedNodeExec.durationMs)}</span>
                   </div>
                 </div>
@@ -263,10 +451,15 @@ export const RunDetailsPage: React.FC = () => {
 
               {/* Logs */}
               <div>
-                <h4 className="text-xs font-bold text-slate-800 uppercase font-mono tracking-wider mb-2">
-                  Node Execution Logs
-                </h4>
-                <LogViewer logs={selectedNodeExec.logs} />
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-bold text-slate-800 uppercase font-mono tracking-wider">
+                    Node Execution Logs
+                  </h4>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    {selectedNodeExec.logs?.length || 0} entries (secrets redacted)
+                  </span>
+                </div>
+                <LogViewer logs={selectedNodeExec.logs || []} />
               </div>
 
               {/* Node Input & Output Grid */}
@@ -299,13 +492,13 @@ export const RunDetailsPage: React.FC = () => {
           <h4 className="text-xs font-bold text-slate-900 uppercase font-mono tracking-wider mb-2">
             Initial Trigger Payload
           </h4>
-          <PayloadViewer title="Workflow Root Input" data={execution.input} />
+          <PayloadViewer title="Workflow Root Input (Sanitized)" data={execution.input} />
         </div>
         <div>
           <h4 className="text-xs font-bold text-slate-900 uppercase font-mono tracking-wider mb-2">
             Final Workflow Output
           </h4>
-          <PayloadViewer title="Final Sinks / Emitted Payload" data={execution.output} />
+          <PayloadViewer title="Final Sinks / Emitted Payload (Sanitized)" data={execution.output} />
         </div>
       </div>
     </div>

@@ -7,6 +7,7 @@ import { validateWorkflow } from './dag.validation.js';
 import { JobDispatcher } from '../queue/job-dispatcher.js';
 import { NodeJobData } from '../queue/local-queue-runner.js';
 import { RetryRecoveryManager } from './retry-recovery.manager.js';
+import { executionEventBus } from './execution-events.js';
 import { createError } from '../middleware/error.middleware.js';
 import { logger } from '../config/logger.js';
 
@@ -131,6 +132,23 @@ export class DurableDagOrchestrator {
     // Persist run and all node executions
     const saved = await executionRepository.createRun(execution, version?.id);
 
+    // Publish initial run status and ready nodes to event stream
+    executionEventBus.publish(executionId, 'run_state', {
+      id: executionId,
+      status: 'Running',
+      startedAt,
+      workflowId: activeWorkflow.id,
+      workflowName: activeWorkflow.name,
+      workflowVersion: versionNumber,
+    });
+
+    for (const nodeId of initialReadyNodeIds) {
+      executionEventBus.publish(executionId, 'node_state', {
+        nodeId,
+        status: 'Ready',
+      });
+    }
+
     await auditRepository.log({
       action: 'EXECUTION_CREATED',
       entityType: 'EXECUTION',
@@ -224,6 +242,16 @@ export class DurableDagOrchestrator {
         error: null,
       });
 
+      // Stream node state transition
+      executionEventBus.publish(jobData.runId, 'node_state', {
+        nodeId: jobData.nodeId,
+        nodeLabel: jobData.nodeLabel,
+        status: 'Succeeded',
+        attempt: result.attempt,
+        durationMs: result.durationMs,
+        output: result.output,
+      });
+
       // 2. Refresh node executions
       const updatedExec = await executionRepository.findById(jobData.runId);
       const allNodeExecs = updatedExec?.nodeExecutions || {};
@@ -258,6 +286,11 @@ export class DurableDagOrchestrator {
           await executionRepository.updateNodeExecution(jobData.runId, childId, {
             status: 'Ready',
             input: childInput,
+          });
+
+          executionEventBus.publish(jobData.runId, 'node_state', {
+            nodeId: childId,
+            status: 'Ready',
           });
 
           // Dispatch child job
@@ -297,6 +330,14 @@ export class DurableDagOrchestrator {
           attempt: currentAttempt,
         });
 
+        executionEventBus.publish(jobData.runId, 'node_state', {
+          nodeId: jobData.nodeId,
+          nodeLabel: jobData.nodeLabel,
+          status: 'Retrying',
+          attempt: currentAttempt,
+          error: result.error,
+        });
+
         logger.info(
           { runId: jobData.runId, nodeId: jobData.nodeId, nextAttempt: currentAttempt + 1 },
           `Scheduling retry for node "${jobData.nodeLabel}" with backoff ${retryEval.backoffDelayMs}ms`
@@ -320,6 +361,15 @@ export class DurableDagOrchestrator {
           completedAt,
         });
 
+        executionEventBus.publish(jobData.runId, 'node_state', {
+          nodeId: jobData.nodeId,
+          nodeLabel: jobData.nodeLabel,
+          status: 'Failed',
+          attempt: currentAttempt,
+          error: result.error,
+          durationMs: result.durationMs,
+        });
+
         // Downstream failure propagation: Mark all reachable descendant nodes as Skipped
         const skippedNodeIds = new Set<string>();
         const queue = [...(childMap.get(jobData.nodeId) || [])];
@@ -334,7 +384,6 @@ export class DurableDagOrchestrator {
         }
 
         for (const skippedId of skippedNodeIds) {
-          const skipNode = nodeMap.get(skippedId);
           const skipReason = `Skipped because upstream dependency "${jobData.nodeLabel}" failed.`;
           await executionRepository.updateNodeExecution(jobData.runId, skippedId, {
             status: 'Skipped',
@@ -347,6 +396,12 @@ export class DurableDagOrchestrator {
                 message: skipReason,
               },
             ],
+          });
+
+          executionEventBus.publish(jobData.runId, 'node_state', {
+            nodeId: skippedId,
+            status: 'Skipped',
+            error: skipReason,
           });
         }
 
@@ -390,6 +445,20 @@ export class DurableDagOrchestrator {
           completedAt,
           durationMs,
         });
+
+        executionEventBus.publish(runId, 'run_state', {
+          status: 'Failed',
+          error: errorMsg,
+          completedAt,
+          durationMs,
+        });
+        executionEventBus.publish(runId, 'close', {
+          status: 'Failed',
+          error: errorMsg,
+          completedAt,
+          durationMs,
+        });
+        executionEventBus.cleanupRun(runId);
       } else if (allSkipped && allExecs.length > 0) {
         await executionRepository.updateExecution(runId, {
           status: 'Skipped',
@@ -397,6 +466,19 @@ export class DurableDagOrchestrator {
           completedAt,
           durationMs,
         });
+
+        executionEventBus.publish(runId, 'run_state', {
+          status: 'Skipped',
+          error: 'All workflow nodes were skipped.',
+          completedAt,
+          durationMs,
+        });
+        executionEventBus.publish(runId, 'close', {
+          status: 'Skipped',
+          completedAt,
+          durationMs,
+        });
+        executionEventBus.cleanupRun(runId);
       } else {
         // Succeeded! Find terminal nodes (nodes with 0 outgoing edges)
         const terminalNodes = nodes.filter((n) => (childMap.get(n.id) || []).length === 0);
@@ -415,24 +497,68 @@ export class DurableDagOrchestrator {
           completedAt,
           durationMs,
         });
+
+        executionEventBus.publish(runId, 'run_state', {
+          status: 'Succeeded',
+          output: finalOutput,
+          completedAt,
+          durationMs,
+        });
+        executionEventBus.publish(runId, 'close', {
+          status: 'Succeeded',
+          completedAt,
+          durationMs,
+        });
+        executionEventBus.cleanupRun(runId);
       }
     }
   }
 
   /**
-   * Resumes and retries a failed run from its failed nodes.
+   * Resumes and retries a failed run by creating a new child execution attempt.
+   * NEVER mutates the original failed run record, keeping execution history authentic.
+   * Succeeded nodes from previous run are reused; failed/skipped nodes are re-executed.
    */
   public async retryRun(runId: string): Promise<Execution> {
     const execution = await executionRepository.findById(runId);
     if (!execution) {
-      throw createError(404, `Execution '${runId}' not found`, 'EXECUTION_NOT_FOUND');
+      throw createError(404, `Execution with ID '${runId}' not found`, 'EXECUTION_NOT_FOUND');
     }
 
-    if (execution.status !== 'Failed') {
+    // Eligibility check: cannot retry active runs
+    if (['Running', 'Pending', 'Ready'].includes(execution.status)) {
+      throw createError(
+        409,
+        `Cannot retry execution in active status '${execution.status}'. Wait for the run to complete or cancel it first.`,
+        'CONFLICT_RUN_ACTIVE'
+      );
+    }
+
+    // Eligibility check: cannot retry succeeded runs
+    if (execution.status === 'Succeeded') {
+      throw createError(
+        400,
+        'Execution has already succeeded. Succeeded runs are not eligible for retry.',
+        'RUN_ALREADY_SUCCEEDED'
+      );
+    }
+
+    // Eligibility check: must be Failed or Cancelled
+    if (execution.status !== 'Failed' && execution.status !== 'Cancelled') {
       throw createError(
         400,
         `Cannot retry execution in status '${execution.status}'. Only failed executions can be retried.`,
         'INVALID_EXECUTION_STATUS'
+      );
+    }
+
+    // Attempt limit check
+    const currentAttempt = execution.retryAttempt || 1;
+    if (currentAttempt >= 5) {
+      throw createError(
+        400,
+        'Maximum retry attempts (5) exceeded for this workflow execution.',
+        'MAX_RETRIES_EXCEEDED'
       );
     }
 
@@ -441,12 +567,6 @@ export class DurableDagOrchestrator {
     const version = await workflowRepository.getVersion(execution.workflowId, versionNumberToUse);
     const nodes = version?.nodes || [];
     const edges = version?.edges || [];
-
-    if (versionNumberToUse !== execution.workflowVersion) {
-      await executionRepository.updateExecution(runId, {
-        workflowVersion: versionNumberToUse,
-      });
-    }
 
     const parentMap = new Map<string, string[]>();
     const childMap = new Map<string, string[]>();
@@ -462,55 +582,72 @@ export class DurableDagOrchestrator {
       if (childMap.has(e.source)) childMap.get(e.source)!.push(e.target);
     }
 
-    // Identify failed nodes and their skipped descendants
-    const nodesToReset = new Set<string>();
-    for (const [nodeId, ne] of Object.entries(execution.nodeExecutions)) {
-      if (ne.status === 'Failed' || ne.status === 'Skipped') {
-        nodesToReset.add(nodeId);
+    // Create a NEW execution record for the retry attempt (never mutating original run)
+    const newRunId = generateId('run');
+    const startedAt = new Date().toISOString();
+    const nodeExecutions: Record<string, NodeExecution> = {};
+
+    // Copy forward succeeded nodes, reset failed/skipped nodes to Pending
+    for (const node of nodes) {
+      const origNodeExec = execution.nodeExecutions[node.id];
+      if (origNodeExec && origNodeExec.status === 'Succeeded') {
+        // Node previously succeeded: carry forward its outputs and state
+        nodeExecutions[node.id] = {
+          id: generateId('node_run'),
+          executionId: newRunId,
+          nodeId: node.id,
+          nodeLabel: node.label,
+          nodeType: node.type,
+          status: 'Succeeded',
+          attempt: origNodeExec.attempt || 1,
+          input: origNodeExec.input,
+          output: origNodeExec.output,
+          startedAt: origNodeExec.startedAt,
+          completedAt: origNodeExec.completedAt,
+          durationMs: origNodeExec.durationMs,
+          logs: origNodeExec.logs || [],
+          error: null,
+        };
+      } else {
+        // Node failed, skipped, or was pending: initialize fresh Pending node for retry
+        nodeExecutions[node.id] = {
+          id: generateId('node_run'),
+          executionId: newRunId,
+          nodeId: node.id,
+          nodeLabel: node.label,
+          nodeType: node.type,
+          status: 'Pending',
+          attempt: (origNodeExec?.attempt || 0) + 1,
+          input: null,
+          output: null,
+          startedAt: null,
+          completedAt: null,
+          durationMs: 0,
+          logs: [],
+          error: null,
+        };
       }
     }
 
-    // Reset these nodes to Pending
-    for (const nodeId of nodesToReset) {
-      await executionRepository.updateNodeExecution(runId, nodeId, {
-        status: 'Pending',
-        error: null,
-        output: null,
-        completedAt: null,
-        durationMs: 0,
-      });
-    }
-
-    // Mark execution as Running
-    await executionRepository.updateExecution(runId, {
-      status: 'Running',
-      error: null,
-      completedAt: null,
-      durationMs: undefined,
-    });
-
-    // Refresh execution
-    const refreshed = await executionRepository.findById(runId);
-    const allNodeExecs = refreshed?.nodeExecutions || {};
-
-    // Find ready nodes among reset nodes (all parents Succeeded)
+    // Identify ready nodes among the pending ones (where all parents are Succeeded)
     const readyNodesToDispatch: string[] = [];
-    for (const nodeId of nodesToReset) {
-      const parents = parentMap.get(nodeId) || [];
-      const allParentsSucceeded = parents.every((pId) => allNodeExecs[pId]?.status === 'Succeeded');
-      if (allParentsSucceeded) {
-        readyNodesToDispatch.push(nodeId);
+    for (const node of nodes) {
+      if (nodeExecutions[node.id].status === 'Pending') {
+        const parents = parentMap.get(node.id) || [];
+        const allParentsSucceeded = parents.every((pId) => nodeExecutions[pId]?.status === 'Succeeded');
+        if (allParentsSucceeded) {
+          readyNodesToDispatch.push(node.id);
+        }
       }
     }
 
+    // Prepare inputs for ready nodes
     for (const nodeId of readyNodesToDispatch) {
-      const node = nodeMap.get(nodeId)!;
       const parents = parentMap.get(nodeId) || [];
-
       const upstreamOutputs: Record<string, unknown> = {};
       let lastParentOutput: unknown = null;
       for (const pId of parents) {
-        const pOutput = allNodeExecs[pId]?.output;
+        const pOutput = nodeExecutions[pId]?.output;
         upstreamOutputs[pId] = pOutput;
         lastParentOutput = pOutput;
       }
@@ -521,13 +658,66 @@ export class DurableDagOrchestrator {
         payload: lastParentOutput !== null ? lastParentOutput : execution.input,
       };
 
-      await executionRepository.updateNodeExecution(runId, nodeId, {
-        status: 'Ready',
-        input,
-      });
+      nodeExecutions[nodeId].status = 'Ready';
+      nodeExecutions[nodeId].input = input;
+    }
+
+    const newExecution: Execution = {
+      id: newRunId,
+      workflowId: execution.workflowId,
+      workflowName: execution.workflowName,
+      workflowVersion: versionNumberToUse,
+      triggerType: 'retry',
+      status: 'Running',
+      input: execution.input,
+      output: null,
+      startedAt,
+      completedAt: null,
+      durationMs: undefined,
+      error: null,
+      retryOfRunId: execution.id,
+      retryAttempt: currentAttempt + 1,
+      nodeExecutions,
+    };
+
+    // Save newly created retry execution
+    const saved = await executionRepository.createRun(newExecution, version?.id);
+
+    await auditRepository.log({
+      action: 'EXECUTION_RETRIED',
+      entityType: 'EXECUTION',
+      entityId: newRunId,
+      details: {
+        originalRunId: execution.id,
+        retryAttempt: currentAttempt + 1,
+        readyNodes: readyNodesToDispatch,
+      },
+    });
+
+    // Stream initial state for the new retry run
+    executionEventBus.publish(newRunId, 'run_state', {
+      id: newRunId,
+      status: 'Running',
+      startedAt,
+      workflowId: execution.workflowId,
+      retryOfRunId: execution.id,
+      retryAttempt: currentAttempt + 1,
+    });
+
+    // Dispatch ready jobs to workers
+    for (const nodeId of readyNodesToDispatch) {
+      const node = nodeMap.get(nodeId)!;
+      const parents = parentMap.get(nodeId) || [];
+      const upstreamOutputs: Record<string, unknown> = {};
+      let lastParentOutput: unknown = null;
+      for (const pId of parents) {
+        const pOutput = nodeExecutions[pId]?.output;
+        upstreamOutputs[pId] = pOutput;
+        lastParentOutput = pOutput;
+      }
 
       const jobData: NodeJobData = {
-        runId,
+        runId: newRunId,
         workflowId: execution.workflowId,
         workflowVersion: versionNumberToUse,
         nodeId: node.id,
@@ -536,15 +726,17 @@ export class DurableDagOrchestrator {
         config: node.config || {},
         workflowInput: execution.input,
         upstreamOutputs,
-        payload: input.payload,
-        attempt: (allNodeExecs[nodeId]?.attempt || 1) + 1,
+        payload: nodeExecutions[nodeId].input && (nodeExecutions[nodeId].input as any).payload !== undefined
+          ? (nodeExecutions[nodeId].input as any).payload
+          : execution.input,
+        attempt: nodeExecutions[nodeId].attempt,
         maxAttempts: 3,
       };
 
       await JobDispatcher.dispatchNodeJob(jobData);
     }
 
-    return (await executionRepository.findById(runId))!;
+    return saved;
   }
 
   /**

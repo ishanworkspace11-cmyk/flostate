@@ -3,6 +3,8 @@ import { NodeExecutorRegistry, NodeExecutionContext } from '../engine/node-execu
 import { durableDagOrchestrator } from '../engine/durable-dag.orchestrator.js';
 import { executionRepository } from '../repositories/execution.repository.js';
 import { ExecutionLogEntry } from '../models/execution.types.js';
+import { executionEventBus } from '../engine/execution-events.js';
+import { sanitizeString, sanitizePayload } from '../utils/sanitizer.js';
 import { logger } from '../config/logger.js';
 
 export class TaskProcessor {
@@ -15,11 +17,21 @@ export class TaskProcessor {
     const logs: ExecutionLogEntry[] = [];
 
     const log = (level: ExecutionLogEntry['level'], message: string, details?: unknown) => {
-      logs.push({
+      const cleanMessage = sanitizeString(message);
+      const cleanDetails = details !== undefined ? sanitizePayload(details) : undefined;
+      const entry: ExecutionLogEntry = {
         timestamp: new Date().toISOString(),
         level,
-        message,
-        details,
+        message: cleanMessage,
+        details: cleanDetails,
+      };
+      logs.push(entry);
+
+      // Publish real-time log event to SSE subscribers
+      executionEventBus.publish(jobData.runId, 'node_log', {
+        nodeId: jobData.nodeId,
+        nodeLabel: jobData.nodeLabel,
+        log: entry,
       });
     };
 
@@ -28,6 +40,15 @@ export class TaskProcessor {
       status: 'Running',
       startedAt,
       attempt: jobData.attempt,
+    });
+
+    // Publish node state transition
+    executionEventBus.publish(jobData.runId, 'node_state', {
+      nodeId: jobData.nodeId,
+      nodeLabel: jobData.nodeLabel,
+      status: 'Running',
+      attempt: jobData.attempt,
+      startedAt,
     });
 
     log('info', `Worker started task for node "${jobData.nodeLabel}" (${jobData.nodeType}) [Attempt ${jobData.attempt}]`);

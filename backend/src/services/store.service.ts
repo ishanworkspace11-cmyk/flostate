@@ -476,6 +476,17 @@ class BackendStore {
     return Object.values(exec.nodeExecutions);
   }
 
+  async findNodeExecution(executionId: string, nodeExecutionId: string): Promise<NodeExecution | null> {
+    const exec = this.executions.get(executionId);
+    if (!exec) return null;
+    for (const ne of Object.values(exec.nodeExecutions)) {
+      if (ne.id === nodeExecutionId || ne.nodeId === nodeExecutionId) {
+        return ne;
+      }
+    }
+    return null;
+  }
+
   // Triggers
   async listTriggers(): Promise<WorkflowTrigger[]> {
     return Array.from(this.triggers.values());

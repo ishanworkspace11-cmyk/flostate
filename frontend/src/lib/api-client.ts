@@ -53,7 +53,7 @@ export interface DashboardSummary {
     workflowName: string;
     workflowVersion: number;
     triggerType: string;
-    status: 'Pending' | 'Ready' | 'Running' | 'Succeeded' | 'Failed' | 'Retrying' | 'Skipped';
+    status: 'Pending' | 'Ready' | 'Running' | 'Succeeded' | 'Failed' | 'Retrying' | 'Skipped' | 'Cancelled';
     startedAt: string;
     completedAt?: string | null;
     durationMs?: number;
@@ -269,6 +269,19 @@ class DormammuApiClient {
 
   async getNodeExecutions(id: string) {
     return this.request<any[]>(`/runs/${id}/nodes`);
+  }
+
+  async getNodeExecution(runId: string, nodeExecutionId: string, options?: { limit?: number; offset?: number; level?: string }) {
+    const query = new URLSearchParams();
+    if (options?.limit) query.append('limit', String(options.limit));
+    if (options?.offset) query.append('offset', String(options.offset));
+    if (options?.level) query.append('level', options.level);
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    return this.request<any>(`/runs/${runId}/nodes/${nodeExecutionId}${qs}`);
+  }
+
+  getRunEventsUrl(runId: string): string {
+    return `${this.baseUrl}/runs/${runId}/events`;
   }
 
   async createRun(workflowId: string, payload?: { input?: Record<string, any>; triggerType?: string }) {

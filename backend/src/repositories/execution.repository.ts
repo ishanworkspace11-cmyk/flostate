@@ -315,6 +315,44 @@ export class ExecutionRepository {
     }
     return store.getNodeExecutions(executionId);
   }
+
+  async findNodeExecution(executionId: string, nodeExecutionId: string): Promise<NodeExecution | null> {
+    const hasDb = await ExecutionRepository.checkDb();
+    if (hasDb) {
+      try {
+        const ne = await prisma.nodeExecution.findFirst({
+          where: {
+            executionId,
+            OR: [
+              { id: nodeExecutionId },
+              { nodeId: nodeExecutionId },
+            ],
+          },
+        });
+        if (ne) {
+          return {
+            id: ne.id,
+            executionId: ne.executionId,
+            nodeId: ne.nodeId,
+            nodeLabel: ne.nodeLabel,
+            nodeType: ne.nodeType as any,
+            status: (ne.status.charAt(0).toUpperCase() + ne.status.slice(1).toLowerCase()) as any,
+            attempt: ne.attempt,
+            input: ne.input,
+            output: ne.output,
+            error: ne.error,
+            startedAt: ne.startedAt?.toISOString() || null,
+            completedAt: ne.completedAt?.toISOString() || null,
+            durationMs: ne.durationMs || undefined,
+            logs: (ne.logs as any) || [],
+          };
+        }
+      } catch (err) {
+        logger.error({ err }, 'Error finding node execution in DB, falling back');
+      }
+    }
+    return store.findNodeExecution(executionId, nodeExecutionId);
+  }
 }
 
 export const executionRepository = new ExecutionRepository();

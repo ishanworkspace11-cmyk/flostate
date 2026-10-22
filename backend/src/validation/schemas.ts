@@ -100,3 +100,23 @@ export const runsQuerySchema = z.object({
   sortBy: z.enum(['startedAt', 'completedAt', 'durationMs', 'status', 'workflowName']).optional().default('startedAt'),
   sortOrder: z.enum(['asc', 'desc']).optional().default('desc'),
 });
+
+export const runParamSchema = z.object({
+  id: z.string().min(1, 'Run ID is required').optional(),
+  runId: z.string().min(1, 'Run ID is required').optional(),
+}).refine((data) => data.id || data.runId, {
+  message: 'Run ID must be provided',
+});
+
+export const nodeExecutionParamSchema = z.object({
+  id: z.string().min(1).optional(),
+  runId: z.string().min(1).optional(),
+  nodeExecutionId: z.string().min(1, 'Node execution ID is required'),
+});
+
+export const nodeExecutionLogsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+  level: z.enum(['info', 'warn', 'error', 'debug']).optional(),
+});
+

@@ -329,10 +329,15 @@ describe('Durable DAG Execution Engine & Distributed Worker Backend', () => {
     const retryBody = (await retryRes.json()) as any;
     expect(retryBody.success).toBe(true);
 
-    // Wait for retried run to finish
-    const retriedRun = await durableDagOrchestrator.waitForCompletion(failedRun.id, 4000);
+    // Wait for retried run to finish (new child execution record)
+    const retriedRunId = retryBody.data.id;
+    const retriedRun = await durableDagOrchestrator.waitForCompletion(retriedRunId, 4000);
     expect(retriedRun.status).toBe('Succeeded');
     expect(retriedRun.nodeExecutions.Step1.status).toBe('Succeeded');
+
+    // Confirm original run history was NOT mutated (Prompt 6 requirement)
+    const originalRun = await executionRepository.findById(failedRun.id);
+    expect(originalRun?.status).toBe('Failed');
   });
 
   it('Worker Heartbeats: Worker records heartbeat, identity, and queues metrics', async () => {
