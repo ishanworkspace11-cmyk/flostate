@@ -54,7 +54,8 @@ export const TriggersPage: React.FC = () => {
   };
 
   const handleCopyWebhook = async (id: string, path: string) => {
-    const fullUrl = `${window.location.origin}${path}`;
+    const backendBase = (import.meta as any).env?.VITE_API_URL || 'http://localhost:4000';
+    const fullUrl = `${backendBase}${path.startsWith('/') ? path : '/' + path}`;
     await copyToClipboard(fullUrl);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);

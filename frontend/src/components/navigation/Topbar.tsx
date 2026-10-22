@@ -1,11 +1,30 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Plus, Play, ExternalLink, ShieldAlert } from 'lucide-react';
+import { Plus, Play, ExternalLink, ShieldAlert, Radio } from 'lucide-react';
 import { WorkflowService } from '../../features/workflows/workflow.service';
 
 export const Topbar: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const [backendOnline, setBackendOnline] = useState(false);
+
+  useEffect(() => {
+    const checkBackend = async () => {
+      try {
+        const res = await fetch('http://localhost:4000/api/health', { method: 'GET', signal: AbortSignal.timeout(1000) });
+        if (res.ok) {
+          setBackendOnline(true);
+        } else {
+          setBackendOnline(false);
+        }
+      } catch {
+        setBackendOnline(false);
+      }
+    };
+    checkBackend();
+    const interval = setInterval(checkBackend, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleCreateWorkflow = () => {
     const newWf = WorkflowService.createWorkflow({
@@ -18,12 +37,19 @@ export const Topbar: React.FC = () => {
   return (
     <header className="h-16 border-b border-slate-200 bg-white/95 backdrop-blur-xs px-6 flex items-center justify-between sticky top-0 z-30">
       <div className="flex items-center gap-3">
-        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono bg-slate-100 text-slate-700 border border-slate-200">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-          STANDALONE DEMO RUNNER
-        </span>
+        {backendOnline ? (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono bg-emerald-50 text-emerald-800 border border-emerald-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            NODE BACKEND ONLINE :4000
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono bg-slate-100 text-slate-700 border border-slate-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            STANDALONE CLIENT RUNNER
+          </span>
+        )}
         <span className="text-xs text-slate-400 hidden sm:inline">
-          Browser-isolated DAG execution engine
+          {backendOnline ? 'Connected to Express DAG engine' : 'Client-side DAG execution engine'}
         </span>
       </div>
 
