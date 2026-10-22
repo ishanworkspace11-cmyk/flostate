@@ -334,9 +334,18 @@ export const WorkflowBuilderPage: React.FC = () => {
   }, [selectedNodeId, nodes]);
 
   // Validation
-  const handleValidate = () => {
+  const handleValidate = async () => {
     if (!workflow) return;
     const currentWf = getCurrentWorkflowObject();
+    try {
+      const res = await apiClient.validateWorkflow(currentWf);
+      if (res.success && res.data) {
+        setValidation(res.data);
+        setShowValidationModal(true);
+        return res.data;
+      }
+    } catch (_e) {}
+
     const result = validateWorkflow(currentWf);
     setValidation(result);
     setShowValidationModal(true);

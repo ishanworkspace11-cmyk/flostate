@@ -3,6 +3,7 @@ import { workflowRepository } from '../repositories/workflow.repository.js';
 import { auditRepository } from '../repositories/audit.repository.js';
 import { BackendExecutionEngine } from '../engine/dag.engine.js';
 import { Execution } from '../models/execution.types.js';
+import { Workflow } from '../models/workflow.types.js';
 import { createError } from '../middleware/error.middleware.js';
 
 export class ExecutionService {
@@ -27,10 +28,22 @@ export class ExecutionService {
       throw createError(404, `Workflow with ID '${workflowId}' not found`, 'WORKFLOW_NOT_FOUND');
     }
 
-    const version = await workflowRepository.getLatestVersion(workflowId);
+    // If published, execute the published immutable snapshot; otherwise execute latest draft
+    const version = workflow.publishedVersion
+      ? await workflowRepository.getVersion(workflowId, workflow.publishedVersion)
+      : await workflowRepository.getLatestVersion(workflowId);
+
+    const executableWorkflow: Workflow = version
+      ? {
+          ...workflow,
+          nodes: version.nodes,
+          edges: version.edges,
+          draftVersion: version.version,
+        }
+      : workflow;
 
     // Execute through engine
-    const executionResult = await BackendExecutionEngine.execute(workflow, {
+    const executionResult = await BackendExecutionEngine.execute(executableWorkflow, {
       initialInput: options.input || {},
       triggerType: options.triggerType || 'manual',
     });

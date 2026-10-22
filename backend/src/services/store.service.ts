@@ -1,7 +1,17 @@
-import { Workflow } from '../models/workflow.types.js';
+import { Workflow, WorkflowNode, WorkflowEdge } from '../models/workflow.types.js';
 import { Execution } from '../models/execution.types.js';
 import { WorkflowTrigger } from '../models/trigger.types.js';
 import { WorkerInstance, WorkerQueueSummary } from '../models/worker.types.js';
+
+export interface StoreWorkflowVersion {
+  id: string;
+  workflowId: string;
+  version: number;
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+  isPublished: boolean;
+  createdAt: string;
+}
 
 function generateId(prefix = 'id'): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
@@ -9,6 +19,7 @@ function generateId(prefix = 'id'): string {
 
 class BackendStore {
   private workflows: Map<string, Workflow> = new Map();
+  private versions: Map<string, StoreWorkflowVersion[]> = new Map();
   private executions: Map<string, Execution> = new Map();
   private triggers: Map<string, WorkflowTrigger> = new Map();
   private workers: WorkerInstance[] = [];
@@ -90,6 +101,17 @@ class BackendStore {
     };
 
     this.workflows.set(wf1.id, wf1);
+    this.versions.set(wf1.id, [
+      {
+        id: `ver-${wf1.id}-3`,
+        workflowId: wf1.id,
+        version: 3,
+        nodes: JSON.parse(JSON.stringify(wf1.nodes)),
+        edges: JSON.parse(JSON.stringify(wf1.edges)),
+        isPublished: true,
+        createdAt: wf1.createdAt,
+      },
+    ]);
 
     // Seed Triggers
     const tr1: WorkflowTrigger = {
@@ -154,18 +176,34 @@ class BackendStore {
   }
 
   async createWorkflow(data: Partial<Workflow>): Promise<Workflow> {
+    const id = generateId('wf');
+    const nodes = data.nodes ? JSON.parse(JSON.stringify(data.nodes)) : [];
+    const edges = data.edges ? JSON.parse(JSON.stringify(data.edges)) : [];
     const newWorkflow: Workflow = {
-      id: generateId('wf'),
+      id,
       name: data.name || 'Untitled Workflow',
       description: data.description || '',
-      status: 'draft',
+      status: (data.status as any) || 'draft',
       draftVersion: 1,
-      nodes: data.nodes || [],
-      edges: data.edges || [],
+      publishedVersion: data.status === 'published' ? 1 : undefined,
+      isArchived: false,
+      nodes,
+      edges,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     this.workflows.set(newWorkflow.id, newWorkflow);
+    this.versions.set(id, [
+      {
+        id: `ver-${id}-1`,
+        workflowId: id,
+        version: 1,
+        nodes: JSON.parse(JSON.stringify(nodes)),
+        edges: JSON.parse(JSON.stringify(edges)),
+        isPublished: data.status === 'published',
+        createdAt: newWorkflow.createdAt,
+      },
+    ]);
     return newWorkflow;
   }
 
@@ -173,23 +211,51 @@ class BackendStore {
     const existing = this.workflows.get(id);
     if (!existing) throw new Error(`Workflow ${id} not found`);
 
+    const hasGraphChanges = Boolean(
+      (updates.nodes && JSON.stringify(updates.nodes) !== JSON.stringify(existing.nodes)) ||
+      (updates.edges && JSON.stringify(updates.edges) !== JSON.stringify(existing.edges))
+    );
+    const newDraftVersion = hasGraphChanges ? existing.draftVersion + 1 : existing.draftVersion;
+    const isNowPublished = updates.status === 'published';
+    const newPublishedVersion = isNowPublished
+      ? updates.publishedVersion ?? existing.publishedVersion ?? existing.draftVersion
+      : updates.publishedVersion !== undefined
+      ? updates.publishedVersion
+      : existing.publishedVersion;
+
     const updated: Workflow = {
       ...existing,
       ...updates,
-      publishedVersion:
-        updates.status === 'published'
-          ? updates.publishedVersion ?? existing.publishedVersion ?? existing.draftVersion
-          : updates.publishedVersion !== undefined
-          ? updates.publishedVersion
-          : existing.publishedVersion,
-      draftVersion: updates.nodes || updates.edges ? existing.draftVersion + 1 : existing.draftVersion,
+      publishedVersion: newPublishedVersion,
+      draftVersion: newDraftVersion,
       updatedAt: new Date().toISOString(),
     };
     this.workflows.set(id, updated);
+
+    const verList = this.versions.get(id) || [];
+    if (hasGraphChanges) {
+      verList.push({
+        id: `ver-${id}-${newDraftVersion}`,
+        workflowId: id,
+        version: newDraftVersion,
+        nodes: JSON.parse(JSON.stringify(updated.nodes)),
+        edges: JSON.parse(JSON.stringify(updated.edges)),
+        isPublished: isNowPublished,
+        createdAt: new Date().toISOString(),
+      });
+    } else if (isNowPublished) {
+      const pubVer = verList.find((v) => v.version === newPublishedVersion);
+      if (pubVer) {
+        pubVer.isPublished = true;
+      }
+    }
+    this.versions.set(id, verList);
+
     return updated;
   }
 
   async deleteWorkflow(id: string): Promise<boolean> {
+    this.versions.delete(id);
     return this.workflows.delete(id);
   }
 
@@ -230,7 +296,31 @@ class BackendStore {
     };
 
     this.workflows.set(duplicated.id, duplicated);
+    this.versions.set(duplicated.id, [
+      {
+        id: `ver-${duplicated.id}-1`,
+        workflowId: duplicated.id,
+        version: 1,
+        nodes: JSON.parse(JSON.stringify(newNodes)),
+        edges: JSON.parse(JSON.stringify(newEdges)),
+        isPublished: false,
+        createdAt: duplicated.createdAt,
+      },
+    ]);
     return duplicated;
+  }
+
+  async getWorkflowVersion(workflowId: string, versionNumber: number): Promise<StoreWorkflowVersion | null> {
+    const list = this.versions.get(workflowId) || [];
+    const found = list.find((v) => v.version === versionNumber);
+    return found ? JSON.parse(JSON.stringify(found)) : null;
+  }
+
+  async getLatestWorkflowVersion(workflowId: string): Promise<StoreWorkflowVersion | null> {
+    const list = this.versions.get(workflowId) || [];
+    if (list.length === 0) return null;
+    const sorted = [...list].sort((a, b) => b.version - a.version);
+    return JSON.parse(JSON.stringify(sorted[0]));
   }
 
   async archiveWorkflow(id: string): Promise<Workflow> {

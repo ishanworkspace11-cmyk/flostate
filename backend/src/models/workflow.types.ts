@@ -90,6 +90,7 @@ export interface Workflow {
 }
 
 export interface ValidationError {
+  code?: string;
   nodeId?: string;
   edgeId?: string;
   severity: 'error' | 'warning';

@@ -440,6 +440,15 @@ export class WorkflowRepository {
         logger.error({ err }, 'Error getting latest workflow version');
       }
     }
+    const memLatest = await store.getLatestWorkflowVersion(workflowId);
+    if (memLatest) {
+      return {
+        id: memLatest.id,
+        version: memLatest.version,
+        nodes: memLatest.nodes,
+        edges: memLatest.edges,
+      };
+    }
     const wf = await store.getWorkflow(workflowId);
     if (!wf) return null;
     return {
@@ -448,6 +457,45 @@ export class WorkflowRepository {
       nodes: wf.nodes,
       edges: wf.edges,
     };
+  }
+
+  async getVersion(
+    workflowId: string,
+    versionNumber: number
+  ): Promise<{ id: string; version: number; nodes: WorkflowNode[]; edges: WorkflowEdge[] } | null> {
+    const hasDb = await WorkflowRepository.checkDb();
+    if (hasDb) {
+      try {
+        const v = await prisma.workflowVersion.findUnique({
+          where: {
+            workflowId_version: {
+              workflowId,
+              version: versionNumber,
+            },
+          },
+        });
+        if (v) {
+          return {
+            id: v.id,
+            version: v.version,
+            nodes: v.nodes as unknown as WorkflowNode[],
+            edges: v.edges as unknown as WorkflowEdge[],
+          };
+        }
+      } catch (err) {
+        logger.error({ err }, 'Error getting workflow version');
+      }
+    }
+    const memVersion = await store.getWorkflowVersion(workflowId, versionNumber);
+    if (memVersion) {
+      return {
+        id: memVersion.id,
+        version: memVersion.version,
+        nodes: memVersion.nodes,
+        edges: memVersion.edges,
+      };
+    }
+    return this.getLatestVersion(workflowId);
   }
 }
 
