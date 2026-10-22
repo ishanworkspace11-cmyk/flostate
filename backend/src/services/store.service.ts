@@ -492,9 +492,20 @@ class BackendStore {
     return Array.from(this.triggers.values());
   }
 
+  async getTrigger(id: string): Promise<WorkflowTrigger | null> {
+    return this.triggers.get(id) || null;
+  }
+
   async getTriggerByPath(path: string): Promise<WorkflowTrigger | null> {
+    const clean = path.startsWith('/') ? path : `/${path}`;
     for (const t of this.triggers.values()) {
-      if (t.webhookPath === path || t.webhookPath === `/api/v1/webhooks/${path}` || t.webhookPath === `/webhooks/${path}`) {
+      if (
+        t.webhookPath === clean ||
+        t.webhookPath === `/api/v1/webhooks${clean}` ||
+        t.webhookPath === `/webhooks${clean}` ||
+        clean === `/api/v1/webhooks/${t.webhookPath?.replace(/^\//, '')}` ||
+        clean === `/webhooks/${t.webhookPath?.replace(/^\//, '')}`
+      ) {
         return t;
       }
     }
@@ -504,6 +515,22 @@ class BackendStore {
   async saveTrigger(trigger: WorkflowTrigger): Promise<WorkflowTrigger> {
     this.triggers.set(trigger.id, trigger);
     return trigger;
+  }
+
+  async updateTrigger(id: string, updates: Partial<WorkflowTrigger>): Promise<WorkflowTrigger | null> {
+    const existing = this.triggers.get(id);
+    if (!existing) return null;
+    const updated: WorkflowTrigger = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    this.triggers.set(id, updated);
+    return updated;
+  }
+
+  async deleteTrigger(id: string): Promise<boolean> {
+    return this.triggers.delete(id);
   }
 
   // Workers

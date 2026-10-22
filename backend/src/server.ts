@@ -7,6 +7,7 @@ import { apiRateLimiter } from './middleware/rate-limit.middleware.js';
 import { errorHandlerMiddleware, notFoundMiddleware } from './middleware/error.middleware.js';
 import { apiV1Router } from './routes/v1/index.js';
 import { webhookIngressRouter } from './routes/v1/trigger.routes.js';
+import { triggerService } from './services/trigger.service.js';
 
 const app = express();
 
@@ -32,7 +33,18 @@ app.use(
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Webhook-Secret', 'X-Requested-With'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Webhook-Secret',
+      'X-Dormammu-Signature',
+      'X-Hub-Signature-256',
+      'X-Webhook-Signature',
+      'Idempotency-Key',
+      'X-Idempotency-Key',
+      'X-Request-Id',
+      'X-Requested-With',
+    ],
   })
 );
 
@@ -68,6 +80,11 @@ if (env.NODE_ENV !== 'test') {
     logger.info(`[Dormammu Engine] API v1 ready at http://localhost:${env.PORT}/api/v1`);
     logger.info(`[Dormammu Engine] Health: http://localhost:${env.PORT}/api/v1/health`);
     logger.info(`[Dormammu Engine] Readiness: http://localhost:${env.PORT}/api/v1/ready`);
+
+    // Synchronize scheduled cron triggers
+    triggerService.initScheduler().catch((err) => {
+      logger.error({ err }, '[Dormammu Engine] Error initializing cron scheduler');
+    });
   });
 
   const handleShutdown = (signal: string) => {

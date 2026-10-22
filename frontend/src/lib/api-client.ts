@@ -320,6 +320,45 @@ class DormammuApiClient {
     });
   }
 
+  async getTrigger(id: string) {
+    return this.request<any>(`/triggers/${id}`);
+  }
+
+  async updateTrigger(id: string, updates: any) {
+    return this.request<any>(`/triggers/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    });
+  }
+
+  async enableTrigger(id: string) {
+    return this.request<any>(`/triggers/${id}/enable`, {
+      method: 'POST',
+    });
+  }
+
+  async disableTrigger(id: string) {
+    return this.request<any>(`/triggers/${id}/disable`, {
+      method: 'POST',
+    });
+  }
+
+  async deleteTrigger(id: string) {
+    return this.request<any>(`/triggers/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getTriggerDeliveries(id: string, limit = 50) {
+    return this.request<any[]>(`/triggers/${id}/deliveries?limit=${limit}`);
+  }
+
+  getWebhookUrl(path: string): string {
+    const clean = path.startsWith('/') ? path : `/${path}`;
+    const baseUrl = this.baseUrl.replace(/\/api\/v1$/, '');
+    return `${baseUrl}${clean.startsWith('/api/v1') ? clean : `/api/v1/webhooks${clean}`}`;
+  }
+
   // Workers
   async listWorkers() {
     return this.request<any[]>('/workers');

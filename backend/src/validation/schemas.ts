@@ -67,8 +67,11 @@ export const createTriggerSchema = z.object({
   kind: z.enum(['webhook', 'cron', 'manual']),
   enabled: z.boolean().default(true),
   cronExpression: z.string().optional(),
+  timezone: z.string().optional(),
   webhookPath: z.string().optional(),
   webhookSecret: z.string().optional(),
+  generateSecret: z.boolean().optional(),
+  allowedMethods: z.array(z.string()).optional(),
   config: z.record(z.any()).optional(),
 });
 
@@ -76,9 +79,15 @@ export const updateTriggerSchema = z.object({
   name: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
   cronExpression: z.string().optional(),
+  timezone: z.string().optional(),
   webhookPath: z.string().optional(),
   webhookSecret: z.string().optional(),
+  allowedMethods: z.array(z.string()).optional(),
   config: z.record(z.any()).optional(),
+});
+
+export const triggerIdParamSchema = z.object({
+  id: z.string().min(1, 'Trigger ID is required'),
 });
 
 export const applicationSettingSchema = z.object({
