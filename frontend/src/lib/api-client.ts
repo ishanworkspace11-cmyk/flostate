@@ -10,6 +10,7 @@ const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://loca
 export interface ApiResponse<T = any> {
   success: boolean;
   data: T;
+  message?: string;
   meta?: {
     total?: number;
     page?: number;
@@ -399,10 +400,32 @@ class DormammuApiClient {
     return this.request<any[]>('/settings');
   }
 
-  async updateSetting(key: string, value: any, category?: string) {
+  async getSetting(key: string) {
+    return this.request<any>(`/settings/${key}`);
+  }
+
+  async updateSetting(key: string, value: any, category?: string, description?: string) {
     return this.request<any>(`/settings/${key}`, {
       method: 'PUT',
-      body: JSON.stringify({ key, value, category }),
+      body: JSON.stringify({ value, category, description }),
+    });
+  }
+
+  async batchUpdateSettings(settings: Record<string, any>) {
+    return this.request<any>('/settings/batch', {
+      method: 'POST',
+      body: JSON.stringify({ settings }),
+    });
+  }
+
+  async getSystemInfo() {
+    return this.request<any>('/settings/system-info');
+  }
+
+  async resetDemoData(confirmation = 'RESET_DEMO_DATA') {
+    return this.request<any>('/settings/demo/reset', {
+      method: 'POST',
+      body: JSON.stringify({ confirmation }),
     });
   }
 }

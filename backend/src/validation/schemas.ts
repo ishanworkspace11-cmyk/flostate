@@ -90,6 +90,50 @@ export const triggerIdParamSchema = z.object({
   id: z.string().min(1, 'Trigger ID is required'),
 });
 
+export const concurrencyLimitSettingSchema = z.object({
+  maxConcurrentWorkflows: z.number().int().min(1).max(100),
+  maxConcurrentTasksPerWorker: z.number().int().min(1).max(50),
+});
+
+export const retryBackoffSettingSchema = z.object({
+  defaultMaxAttempts: z.number().int().min(1).max(10),
+  backoffType: z.enum(['exponential', 'linear', 'fixed']),
+  initialDelayMs: z.number().int().min(100).max(60000),
+});
+
+export const nodeTimeoutSettingSchema = z.object({
+  defaultNodeTimeoutMs: z.number().int().min(1000).max(600000),
+  httpRequestTimeoutMs: z.number().int().min(1000).max(120000),
+});
+
+export const historyRetentionSettingSchema = z.object({
+  retentionDays: z.number().int().min(1).max(365),
+  maxExecutionsToRetain: z.number().int().min(100).max(100000),
+  autoCleanupEnabled: z.boolean(),
+});
+
+export const uiPreferenceSettingSchema = z.object({
+  theme: z.enum(['light', 'dark', 'system']),
+  autoRefreshIntervalMs: z.number().int().min(2000).max(60000),
+  compactGraphView: z.boolean(),
+});
+
+export const updateSettingBodySchema = z.object({
+  value: z.any(),
+  category: z.enum(['execution', 'resilience', 'timeouts', 'retention', 'ui', 'general']).optional(),
+  description: z.string().optional(),
+});
+
+export const batchUpdateSettingsBodySchema = z.object({
+  settings: z.record(z.any()),
+});
+
+export const demoResetSchema = z.object({
+  confirmation: z.literal('RESET_DEMO_DATA', {
+    errorMap: () => ({ message: "Must provide confirmation string 'RESET_DEMO_DATA'" }),
+  }),
+});
+
 export const applicationSettingSchema = z.object({
   key: z.string().min(1),
   value: z.any(),

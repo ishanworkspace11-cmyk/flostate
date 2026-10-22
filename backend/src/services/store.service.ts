@@ -566,6 +566,28 @@ class BackendStore {
   async getQueues(): Promise<WorkerQueueSummary[]> {
     return this.queues;
   }
+
+  public resetToFactoryDefaults(): { workflows: number; executions: number; triggers: number } {
+    this.workflows.clear();
+    this.versions.clear();
+    this.executions.clear();
+    this.triggers.clear();
+    this.seed();
+    return {
+      workflows: this.workflows.size,
+      executions: this.executions.size,
+      triggers: this.triggers.size,
+    };
+  }
+
+  public getCounts(): { workflows: number; executions: number; triggers: number; workers: number } {
+    return {
+      workflows: this.workflows.size,
+      executions: this.executions.size,
+      triggers: this.triggers.size,
+      workers: this.workers.length,
+    };
+  }
 }
 
 export const store = new BackendStore();
