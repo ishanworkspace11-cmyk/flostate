@@ -78,7 +78,11 @@ export const CustomWorkflowNode: React.FC<NodeProps> = memo((props) => {
   } else if (type === 'transform') {
     subtitle = config.operation ? config.operation.replace('_', ' ') : 'pass through';
   } else if (type === 'webhookAction') {
-    subtitle = config.url ? new URL(config.url).pathname : 'Outbound webhook';
+    try {
+      subtitle = config.url ? (config.url.startsWith('http') ? new URL(config.url).pathname : config.url) : 'Outbound webhook';
+    } catch {
+      subtitle = config.url || 'Outbound webhook';
+    }
   }
 
   // Execution status badge rendering

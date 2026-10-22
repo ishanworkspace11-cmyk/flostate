@@ -276,15 +276,23 @@ export const WorkflowService = {
     }
 
     const current = list[index];
+    const newDraftVersion = updates.draftVersion !== undefined
+      ? updates.draftVersion
+      : (updates.nodes || updates.edges ? current.draftVersion + 1 : current.draftVersion);
+
     const updated: Workflow = {
       ...current,
       ...updates,
-      draftVersion: updates.nodes || updates.edges ? current.draftVersion + 1 : current.draftVersion,
+      draftVersion: newDraftVersion,
       updatedAt: new Date().toISOString(),
     };
 
     list[index] = updated;
-    localStorage.setItem(WORKFLOWS_STORAGE_KEY, safeJsonStringify(list));
+    try {
+      localStorage.setItem(WORKFLOWS_STORAGE_KEY, safeJsonStringify(list));
+    } catch (err) {
+      console.warn('LocalStorage save failed:', err);
+    }
     return updated;
   },
 

@@ -317,6 +317,8 @@ export class ExecutionEngine {
               ? sourceData
               : Array.isArray(sourceData?.items)
               ? sourceData.items
+              : Array.isArray(sourceData?.data?.items)
+              ? sourceData.data.items
               : Array.isArray(sourceData?.data)
               ? sourceData.data
               : [];
@@ -344,10 +346,16 @@ export class ExecutionEngine {
               ? sourceData
               : Array.isArray(sourceData?.items)
               ? sourceData.items
+              : Array.isArray(sourceData?.data?.items)
+              ? sourceData.data.items
+              : Array.isArray(sourceData?.data)
+              ? sourceData.data
               : [];
             
             const field = config.aggregateField || 'value';
-            const numbers = items.map((i: any) => Number(i[field])).filter((n: number) => !isNaN(n));
+            const numbers = items
+              .map((i: any) => (typeof i === 'number' ? i : Number(i[field])))
+              .filter((n: number) => !isNaN(n));
             const aggOp = config.aggregateOp || 'sum';
 
             let result = 0;

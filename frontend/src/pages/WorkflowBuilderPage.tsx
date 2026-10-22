@@ -43,6 +43,7 @@ import {
 } from 'lucide-react';
 import { LogViewer } from '../components/executions/LogViewer';
 import { PayloadViewer } from '../components/executions/PayloadViewer';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
 
 export const WorkflowBuilderPage: React.FC = () => {
   const { workflowId } = useParams<{ workflowId: string }>();
@@ -52,6 +53,7 @@ export const WorkflowBuilderPage: React.FC = () => {
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [workflowName, setWorkflowName] = useState('Untitled Workflow');
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
 
   // React Flow state
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -66,7 +68,19 @@ export const WorkflowBuilderPage: React.FC = () => {
   const [isRunning, setIsRunning] = useState(false);
   const [activeExecution, setActiveExecution] = useState<Execution | null>(null);
   const [isConsoleDrawerOpen, setIsConsoleDrawerOpen] = useState(false);
-  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error'; runId?: string } | null>(null);
+
+  // Warn on browser close/refresh when there are unsaved changes
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   // Load workflow on mount or route param change
   useEffect(() => {
@@ -76,13 +90,17 @@ export const WorkflowBuilderPage: React.FC = () => {
     }
 
     if (!targetWf) {
-      // If no ID or ID not found, take first available or create blank
-      const list = WorkflowService.listWorkflows();
-      if (list.length > 0) {
-        targetWf = list[0];
+      if (workflowId) {
+        // ID was requested but not found
+        const list = WorkflowService.listWorkflows();
+        targetWf = list.length > 0 ? list[0] : WorkflowService.createWorkflow({ name: 'Default DAG Workflow' });
         navigate(`/builder/${targetWf.id}`, { replace: true });
       } else {
-        targetWf = WorkflowService.createWorkflow({ name: 'Default DAG Workflow' });
+        // Plain /builder path -> initialize a fresh new workflow
+        targetWf = WorkflowService.createWorkflow({
+          name: `Pipeline_${Math.floor(Math.random() * 900 + 100)}`,
+          description: 'Newly created DAG automation pipeline',
+        });
         navigate(`/builder/${targetWf.id}`, { replace: true });
       }
     }
@@ -154,8 +172,12 @@ export const WorkflowBuilderPage: React.FC = () => {
   // React Flow Handlers
   const onNodesChange: OnNodesChange = useCallback((changes) => {
     setNodes((nds) => applyNodeChanges(changes, nds));
+    const removedIds = changes.filter((c) => c.type === 'remove').map((c) => (c as any).id);
+    if (selectedNodeId && removedIds.includes(selectedNodeId)) {
+      setSelectedNodeId(null);
+    }
     setHasUnsavedChanges(true);
-  }, []);
+  }, [selectedNodeId]);
 
   const onEdgesChange: OnEdgesChange = useCallback((changes) => {
     setEdges((eds) => applyEdgeChanges(changes, eds));
@@ -174,7 +196,7 @@ export const WorkflowBuilderPage: React.FC = () => {
         {
           ...connection,
           id: generateId('e'),
-          type: 'smoothstep',
+          type: 'customEdge',
         },
         eds
       )
@@ -192,7 +214,7 @@ export const WorkflowBuilderPage: React.FC = () => {
 
   // Adding node from Palette
   const handleAddNode = useCallback(
-    (type: NodeType, position = { x: 250, y: 150 }) => {
+    (type: NodeType, position?: { x: number; y: number }) => {
       const newNodeId = generateId(`node_${type}`);
       const defaultConfigs: Record<NodeType, Record<string, any>> = {
         trigger: { triggerType: 'manual', defaultPayload: { demoKey: 'demoValue' } },
@@ -210,18 +232,26 @@ export const WorkflowBuilderPage: React.FC = () => {
         webhookAction: 'Outbound Webhook',
       };
 
-      const newNode: Node = {
-        id: newNodeId,
-        type: 'custom',
-        position,
-        data: {
-          label: labels[type] || 'New Node',
-          type,
-          config: defaultConfigs[type] || {},
-        },
-      };
+      setNodes((nds) => {
+        const finalPos = position || {
+          x: 140 + (nds.length % 5) * 60 + Math.floor(nds.length / 5) * 30,
+          y: 120 + (nds.length % 5) * 50,
+        };
 
-      setNodes((nds) => [...nds, newNode]);
+        const newNode: Node = {
+          id: newNodeId,
+          type: 'custom',
+          position: finalPos,
+          data: {
+            label: labels[type] || 'New Node',
+            type,
+            config: defaultConfigs[type] || {},
+          },
+        };
+
+        return [...nds, newNode];
+      });
+
       setSelectedNodeId(newNodeId);
       setHasUnsavedChanges(true);
     },
@@ -395,18 +425,28 @@ export const WorkflowBuilderPage: React.FC = () => {
         setToastMessage({
           text: `Test run finished in ${execution.durationMs}ms with status: Succeeded`,
           type: 'success',
+          runId: execution.id,
         });
       } else {
         setToastMessage({
           text: `Test run completed with status: ${execution.status}`,
           type: 'error',
+          runId: execution.id,
         });
       }
     } catch (err: any) {
       setToastMessage({ text: `Execution engine error: ${err.message}`, type: 'error' });
     } finally {
       setIsRunning(false);
-      setTimeout(() => setToastMessage(null), 4000);
+      setTimeout(() => setToastMessage(null), 6000);
+    }
+  };
+
+  const handleBackToWorkflows = () => {
+    if (hasUnsavedChanges) {
+      setShowExitConfirm(true);
+    } else {
+      navigate('/workflows');
     }
   };
 
@@ -422,11 +462,19 @@ export const WorkflowBuilderPage: React.FC = () => {
           }`}
         >
           {toastMessage.type === 'success' ? (
-            <CheckCircle className="w-4 h-4 text-emerald-400" />
+            <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
           ) : (
-            <AlertCircle className="w-4 h-4 text-white" />
+            <AlertCircle className="w-4 h-4 text-white shrink-0" />
           )}
           <span>{toastMessage.text}</span>
+          {toastMessage.runId && (
+            <button
+              onClick={() => navigate(`/runs/${toastMessage.runId}`)}
+              className="ml-2 font-semibold underline hover:text-indigo-200 transition shrink-0"
+            >
+              View Run Details &rarr;
+            </button>
+          )}
         </div>
       )}
 
@@ -434,7 +482,7 @@ export const WorkflowBuilderPage: React.FC = () => {
       <div className="h-14 bg-white border-b border-slate-200 px-4 flex items-center justify-between shrink-0 z-20">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate('/workflows')}
+            onClick={handleBackToWorkflows}
             title="Back to workflows"
             className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition"
           >
@@ -608,6 +656,7 @@ export const WorkflowBuilderPage: React.FC = () => {
         {/* Right Config Panel */}
         {selectedNode && (
           <NodeConfigPanel
+            key={selectedNode.id}
             node={selectedNode}
             onUpdateNode={handleUpdateNode}
             onDeleteNode={handleDeleteNode}
@@ -615,6 +664,21 @@ export const WorkflowBuilderPage: React.FC = () => {
           />
         )}
       </div>
+
+      {/* Discard Changes Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={showExitConfirm}
+        title="Unsaved Changes"
+        message="You have unsaved changes in this workflow. Leaving without saving will discard your modifications."
+        confirmLabel="Leave without Saving"
+        cancelLabel="Stay in Builder"
+        isDestructive
+        onConfirm={() => {
+          setShowExitConfirm(false);
+          navigate('/workflows');
+        }}
+        onCancel={() => setShowExitConfirm(false)}
+      />
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import { Workflow, ValidationError, ValidationResult, WorkflowNode, WorkflowEdge } from './workflow.types';
+import { Workflow, ValidationError, ValidationResult, WorkflowNode } from './workflow.types';
 
 export function validateWorkflow(workflow: Workflow): ValidationResult {
   const errors: ValidationError[] = [];
@@ -81,6 +81,7 @@ export function validateWorkflow(workflow: Workflow): ValidationResult {
     if (edge.source === edge.target) {
       errors.push({
         edgeId: edge.id,
+        nodeId: edge.source,
         severity: 'error',
         message: `Self-referencing loop detected on node "${nodeMap.get(edge.source)?.label || edge.source}".`,
       });
@@ -116,7 +117,7 @@ export function validateWorkflow(workflow: Workflow): ValidationResult {
   }
 
   // 4. Cycle Detection using DFS color marking (White=0, Gray=1, Black=2)
-  const visitedState = new Map<string, number>(); // 0: unvisited, 1: visiting, 2: visited
+  const visitedState = new Map<string, number>();
   const cycleNodes = new Set<string>();
 
   function dfsFindCycle(nodeId: string, path: string[]) {
@@ -127,7 +128,6 @@ export function validateWorkflow(workflow: Workflow): ValidationResult {
     for (const neighbor of neighbors) {
       const state = visitedState.get(neighbor) || 0;
       if (state === 1) {
-        // Cycle detected!
         const cycleStartIndex = path.indexOf(neighbor);
         const cyclePath = [...path.slice(cycleStartIndex), neighbor];
         const cycleLabels = cyclePath.map((id) => nodeMap.get(id)?.label || id).join(' -> ');
@@ -237,24 +237,46 @@ export function validateWorkflow(workflow: Workflow): ValidationResult {
         break;
       }
     }
+  }
 
-    // Reachability check: if node is not a trigger and has 0 in-degree, warn that it's disconnected
-    if (node.type !== 'trigger' && (inDegree.get(node.id) || 0) === 0) {
+  // 6. Reachability check from Trigger nodes
+  const reachableFromTrigger = new Set<string>();
+  const triggerQueue: string[] = [];
+
+  for (const trigger of triggerNodes) {
+    reachableFromTrigger.add(trigger.id);
+    triggerQueue.push(trigger.id);
+  }
+
+  let queueIdx = 0;
+  while (queueIdx < triggerQueue.length) {
+    const current = triggerQueue[queueIdx++];
+    const children = adjacencyList.get(current) || [];
+    for (const child of children) {
+      if (!reachableFromTrigger.has(child)) {
+        reachableFromTrigger.add(child);
+        triggerQueue.push(child);
+      }
+    }
+  }
+
+  for (const node of nodes) {
+    if (node.type !== 'trigger' && !reachableFromTrigger.has(node.id)) {
       warnings.push({
         nodeId: node.id,
         severity: 'warning',
-        message: `Node "${label}" is orphaned (has no incoming connections and is not a trigger). It will not be reached.`,
+        message: `Node "${node.label}" is disconnected from trigger paths and will not be reached during execution.`,
       });
     }
   }
 
-  // 6. Compute Topological Sort (Kahn's algorithm)
+  // 7. Compute Topological Sort (Kahn's algorithm)
   const topologicalOrder: string[] = [];
   if (cycleNodes.size === 0) {
     const tempInDegree = new Map<string, number>(inDegree);
     const queue: string[] = [];
 
-    // Start with all nodes that have in-degree 0 (typically triggers)
+    // Start with all nodes that have in-degree 0 (triggers and any isolated roots)
     for (const [id, deg] of tempInDegree.entries()) {
       if (deg === 0) {
         queue.push(id);
@@ -273,6 +295,14 @@ export function validateWorkflow(workflow: Workflow): ValidationResult {
           queue.push(neighbor);
         }
       }
+    }
+
+    // Check if Kahn's algorithm processed all nodes
+    if (topologicalOrder.length < nodes.length && errors.length === 0) {
+      errors.push({
+        severity: 'error',
+        message: 'Graph contains an unresolved circular dependency preventing topological execution ordering.',
+      });
     }
   }
 

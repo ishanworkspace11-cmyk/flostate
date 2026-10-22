@@ -89,7 +89,7 @@ describe('Workflow Validation', () => {
       updatedAt: new Date().toISOString(),
       nodes: [
         { id: 'n1', type: 'trigger', label: 'Trigger', position: { x: 0, y: 0 }, config: { triggerType: 'manual' } },
-        { id: 'n2', type: 'httpRequest', label: 'Bad HTTP Node', position: { x: 200, y: 0 }, config: { url: '' } }, // Empty URL
+        { id: 'n2', type: 'httpRequest', label: 'Bad HTTP Node', position: { x: 200, y: 0 }, config: { url: '' } },
       ],
       edges: [{ id: 'e1', source: 'n1', target: 'n2' }],
     };
@@ -97,6 +97,73 @@ describe('Workflow Validation', () => {
     const res = validateWorkflow(workflow);
     expect(res.isValid).toBe(false);
     expect(res.errors.some((e) => e.message.includes('requires a target URL'))).toBe(true);
+  });
+
+  it('detects self-referencing loops on the same node', () => {
+    const workflow: Workflow = {
+      id: 'wf-self-loop',
+      name: 'Self Loop Workflow',
+      description: 'Node connecting to itself',
+      status: 'draft',
+      draftVersion: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      nodes: [
+        { id: 'n1', type: 'trigger', label: 'Trigger', position: { x: 0, y: 0 }, config: { triggerType: 'manual' } },
+        { id: 'n2', type: 'transform', label: 'Self Loop Node', position: { x: 200, y: 0 }, config: { operation: 'pass_through' } },
+      ],
+      edges: [
+        { id: 'e1', source: 'n1', target: 'n2' },
+        { id: 'e2', source: 'n2', target: 'n2' },
+      ],
+    };
+
+    const res = validateWorkflow(workflow);
+    expect(res.isValid).toBe(false);
+    expect(res.errors.some((e) => e.message.includes('Self-referencing loop'))).toBe(true);
+  });
+
+  it('detects unreachable and disconnected nodes', () => {
+    const workflow: Workflow = {
+      id: 'wf-unreachable',
+      name: 'Unreachable Node Workflow',
+      description: 'Node not connected to trigger',
+      status: 'draft',
+      draftVersion: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      nodes: [
+        { id: 'n1', type: 'trigger', label: 'Root Trigger', position: { x: 0, y: 0 }, config: { triggerType: 'manual' } },
+        { id: 'n2', type: 'transform', label: 'Active Step', position: { x: 200, y: 0 }, config: { operation: 'pass_through' } },
+        { id: 'n3', type: 'transform', label: 'Disconnected Step', position: { x: 400, y: 200 }, config: { operation: 'pass_through' } },
+      ],
+      edges: [{ id: 'e1', source: 'n1', target: 'n2' }],
+    };
+
+    const res = validateWorkflow(workflow);
+    expect(res.isValid).toBe(true); // Warnings do not make workflow invalid, but are flagged
+    expect(res.warnings.some((w) => w.message.includes('disconnected from trigger paths'))).toBe(true);
+  });
+
+  it('rejects trigger nodes with incoming dependencies', () => {
+    const workflow: Workflow = {
+      id: 'wf-trigger-with-parent',
+      name: 'Invalid Trigger',
+      description: 'Trigger node has incoming connection',
+      status: 'draft',
+      draftVersion: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      nodes: [
+        { id: 'n1', type: 'trigger', label: 'Trigger 1', position: { x: 0, y: 0 }, config: { triggerType: 'manual' } },
+        { id: 'n2', type: 'trigger', label: 'Trigger 2', position: { x: 200, y: 0 }, config: { triggerType: 'manual' } },
+      ],
+      edges: [{ id: 'e1', source: 'n1', target: 'n2' }],
+    };
+
+    const res = validateWorkflow(workflow);
+    expect(res.isValid).toBe(false);
+    expect(res.errors.some((e) => e.message.includes('has incoming connections'))).toBe(true);
   });
 });
 
@@ -173,6 +240,72 @@ describe('Execution Engine', () => {
     expect(execution.nodeExecutions['branchA'].status).toBe('Succeeded');
     expect(execution.nodeExecutions['branchB'].status).toBe('Succeeded');
     expect(execution.nodeExecutions['join'].status).toBe('Succeeded');
+  });
+
+  it('executes math aggregation and filter operations correctly', async () => {
+    const workflow: Workflow = {
+      id: 'wf-math-filter',
+      name: 'Data Processing Workflow',
+      description: 'Tests filter and aggregation transforms',
+      status: 'draft',
+      draftVersion: 1,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      nodes: [
+        {
+          id: 'start',
+          type: 'trigger',
+          label: 'Order Stream',
+          position: { x: 0, y: 0 },
+          config: {
+            triggerType: 'manual',
+            defaultPayload: {
+              items: [
+                { id: '1', amount: 50, status: 'completed' },
+                { id: '2', amount: 150, status: 'completed' },
+                { id: '3', amount: 20, status: 'refunded' },
+              ],
+            },
+          },
+        },
+        {
+          id: 'filter-step',
+          type: 'transform',
+          label: 'Filter Completed Orders',
+          position: { x: 200, y: 0 },
+          config: {
+            operation: 'filter_array',
+            filterKey: 'status',
+            filterValue: 'completed',
+          },
+        },
+        {
+          id: 'aggregate-step',
+          type: 'transform',
+          label: 'Sum Completed Revenue',
+          position: { x: 400, y: 0 },
+          config: {
+            operation: 'math_aggregate',
+            aggregateOp: 'sum',
+            aggregateField: 'amount',
+          },
+        },
+      ],
+      edges: [
+        { id: 'e1', source: 'start', target: 'filter-step' },
+        { id: 'e2', source: 'filter-step', target: 'aggregate-step' },
+      ],
+    };
+
+    const execution = await ExecutionEngine.execute(workflow);
+    expect(execution.status).toBe('Succeeded');
+
+    const filterOutput = execution.nodeExecutions['filter-step'].output as any;
+    expect(filterOutput.matchedItems).toBe(2);
+
+    const aggOutput = execution.nodeExecutions['aggregate-step'].output as any;
+    expect(aggOutput.operation).toBe('sum');
+    expect(aggOutput.result).toBe(200);
   });
 
   it('propagates failure and marks downstream nodes as Skipped', async () => {

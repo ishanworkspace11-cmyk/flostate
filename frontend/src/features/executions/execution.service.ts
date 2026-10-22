@@ -295,7 +295,11 @@ export const ExecutionService = {
     }
     // Limit stored runs to 50
     const trimmed = list.slice(0, 50);
-    localStorage.setItem(EXECUTIONS_STORAGE_KEY, safeJsonStringify(trimmed));
+    try {
+      localStorage.setItem(EXECUTIONS_STORAGE_KEY, safeJsonStringify(trimmed));
+    } catch (err) {
+      console.warn('LocalStorage execution save failed:', err);
+    }
     return execution;
   },
 

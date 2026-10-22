@@ -4,9 +4,6 @@ import {
   Controls,
   Background,
   MiniMap,
-  applyNodeChanges,
-  applyEdgeChanges,
-  addEdge,
   Node,
   Edge,
   OnNodesChange,
@@ -18,11 +15,15 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { CustomWorkflowNode } from './WorkflowNode';
+import { CustomWorkflowEdge } from './WorkflowEdge';
 import { NodeType } from '../../features/workflows/workflow.types';
-import { generateId } from '../../lib/utils';
 
 const nodeTypes = {
   custom: CustomWorkflowNode,
+};
+
+const edgeTypes = {
+  customEdge: CustomWorkflowEdge,
 };
 
 interface WorkflowCanvasProps {
@@ -49,6 +50,19 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const reactFlowInstance = useRef<ReactFlowInstance | null>(null);
 
+  const isValidConnection = useCallback(
+    (connection: Connection | Edge) => {
+      if (!connection.source || !connection.target) return false;
+      if (connection.source === connection.target) return false;
+      // Prevent duplicate edges
+      const duplicate = edges.some(
+        (e) => e.source === connection.source && e.target === connection.target
+      );
+      return !duplicate;
+    },
+    [edges]
+  );
+
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
@@ -61,7 +75,6 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
       const type = event.dataTransfer.getData('application/reactflow-type') as NodeType;
       if (!type || !reactFlowInstance.current || !reactFlowWrapper.current) return;
 
-      const reactFlowBounds = reactFlowWrapper.current.getBoundingClientRect();
       const position = reactFlowInstance.current.screenToFlowPosition({
         x: event.clientX,
         y: event.clientY,
@@ -88,14 +101,16 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
         onDrop={onDrop}
         onDragOver={onDragOver}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        isValidConnection={isValidConnection}
+        deleteKeyCode={['Backspace', 'Delete']}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         snapToGrid
         snapGrid={[16, 16]}
         defaultEdgeOptions={{
-          type: 'smoothstep',
+          type: 'customEdge',
           animated: false,
-          style: { strokeWidth: 2, stroke: '#94a3b8' },
         }}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="#cbd5e1" />
