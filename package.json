@@ -9,6 +9,8 @@
     "dev": "npm run dev:frontend",
     "dev:frontend": "npm run dev --workspace=frontend",
     "dev:backend": "npm run dev --workspace=backend",
+    "worker": "npm run worker --workspace=backend",
+    "worker:dev": "npm run worker:dev --workspace=backend",
     "build:frontend": "npm run build --workspace=frontend",
     "build:backend": "npm run build --workspace=backend",
     "build": "npm run build:frontend && npm run build:backend",

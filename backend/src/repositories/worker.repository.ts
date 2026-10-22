@@ -48,13 +48,15 @@ export class WorkerRepository {
     completedJobsCount?: number;
     failedJobsCount?: number;
     uptimeSeconds?: number;
+    hostname?: string;
+    name?: string;
   }): Promise<void> {
     const hasDb = await WorkerRepository.checkDb();
     if (hasDb) {
       try {
-        await prisma.workerInstance.update({
+        await prisma.workerInstance.upsert({
           where: { id },
-          data: {
+          update: {
             lastHeartbeat: new Date(),
             status: data.status ? (data.status.toUpperCase() as PrismaWorkerStatus) : undefined,
             concurrency: data.concurrency,
@@ -63,11 +65,28 @@ export class WorkerRepository {
             failedJobsCount: data.failedJobsCount,
             uptimeSeconds: data.uptimeSeconds,
           },
+          create: {
+            id,
+            name: data.name || id,
+            hostname: data.hostname || 'localhost',
+            status: data.status ? (data.status.toUpperCase() as PrismaWorkerStatus) : PrismaWorkerStatus.IDLE,
+            concurrency: data.concurrency || 5,
+            currentJobs: data.currentJobs as any,
+            completedJobsCount: data.completedJobsCount || 0,
+            failedJobsCount: data.failedJobsCount || 0,
+            uptimeSeconds: data.uptimeSeconds || 0,
+            lastHeartbeat: new Date(),
+            isSimulated: false,
+          },
         });
       } catch (err) {
         logger.error({ err }, 'Error recording worker heartbeat in DB');
       }
     }
+    await store.recordWorkerHeartbeat(id, {
+      ...data,
+      status: data.status ? (data.status.toLowerCase() as any) : undefined,
+    });
   }
 
   async getQueueSummaries(): Promise<WorkerQueueSummary[]> {

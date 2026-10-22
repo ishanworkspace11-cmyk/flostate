@@ -2,7 +2,8 @@ import { executionRepository } from '../repositories/execution.repository.js';
 import { workflowRepository } from '../repositories/workflow.repository.js';
 import { auditRepository } from '../repositories/audit.repository.js';
 import { BackendExecutionEngine } from '../engine/dag.engine.js';
-import { Execution } from '../models/execution.types.js';
+import { durableDagOrchestrator } from '../engine/durable-dag.orchestrator.js';
+import { Execution, NodeExecution } from '../models/execution.types.js';
 import { Workflow } from '../models/workflow.types.js';
 import { createError } from '../middleware/error.middleware.js';
 
@@ -17,6 +18,28 @@ export class ExecutionService {
       throw createError(404, `Execution with ID '${id}' not found`, 'EXECUTION_NOT_FOUND');
     }
     return run;
+  }
+
+  async getNodeExecutions(id: string): Promise<NodeExecution[]> {
+    const run = await executionRepository.findById(id);
+    if (!run) {
+      throw createError(404, `Execution with ID '${id}' not found`, 'EXECUTION_NOT_FOUND');
+    }
+    return executionRepository.getNodeExecutions(id);
+  }
+
+  async createDurableRun(
+    workflowId: string,
+    options: { input?: Record<string, unknown>; triggerType?: string } = {}
+  ): Promise<Execution> {
+    return durableDagOrchestrator.createRun(workflowId, {
+      input: options.input,
+      triggerType: options.triggerType || 'manual',
+    });
+  }
+
+  async retryExecution(id: string): Promise<Execution> {
+    return durableDagOrchestrator.retryRun(id);
   }
 
   async triggerExecution(workflowId: string, options: {

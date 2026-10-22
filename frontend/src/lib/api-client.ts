@@ -250,6 +250,23 @@ class DormammuApiClient {
     return this.request<any>(`/runs/${id}`);
   }
 
+  async getNodeExecutions(id: string) {
+    return this.request<any[]>(`/runs/${id}/nodes`);
+  }
+
+  async createRun(workflowId: string, payload?: { input?: Record<string, any>; triggerType?: string }) {
+    return this.request<any>(`/workflows/${workflowId}/runs`, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+  }
+
+  async retryRun(id: string) {
+    return this.request<any>(`/runs/${id}/retry`, {
+      method: 'POST',
+    });
+  }
+
   async triggerExecution(workflowId: string, payload?: { input?: Record<string, any>; triggerType?: string }) {
     return this.request<any>(`/runs/workflows/${workflowId}/run`, {
       method: 'POST',

@@ -1,5 +1,5 @@
 import { Workflow, WorkflowNode, WorkflowEdge } from '../models/workflow.types.js';
-import { Execution } from '../models/execution.types.js';
+import { Execution, NodeExecution } from '../models/execution.types.js';
 import { WorkflowTrigger } from '../models/trigger.types.js';
 import { WorkerInstance, WorkerQueueSummary } from '../models/worker.types.js';
 
@@ -360,6 +360,38 @@ class BackendStore {
     return execution;
   }
 
+  async updateExecution(id: string, updates: Partial<Execution>): Promise<Execution | null> {
+    const existing = this.executions.get(id);
+    if (!existing) return null;
+    const updated: Execution = {
+      ...existing,
+      ...updates,
+      nodeExecutions: updates.nodeExecutions ? { ...existing.nodeExecutions, ...updates.nodeExecutions } : existing.nodeExecutions,
+    };
+    this.executions.set(id, updated);
+    return updated;
+  }
+
+  async updateNodeExecution(executionId: string, nodeId: string, updates: Partial<NodeExecution>): Promise<NodeExecution | null> {
+    const exec = this.executions.get(executionId);
+    if (!exec || !exec.nodeExecutions[nodeId]) return null;
+    const existingNode = exec.nodeExecutions[nodeId];
+    const updatedNode: NodeExecution = {
+      ...existingNode,
+      ...updates,
+      logs: updates.logs !== undefined ? updates.logs : existingNode.logs,
+    };
+    exec.nodeExecutions[nodeId] = updatedNode;
+    this.executions.set(executionId, exec);
+    return updatedNode;
+  }
+
+  async getNodeExecutions(executionId: string): Promise<NodeExecution[]> {
+    const exec = this.executions.get(executionId);
+    if (!exec) return [];
+    return Object.values(exec.nodeExecutions);
+  }
+
   // Triggers
   async listTriggers(): Promise<WorkflowTrigger[]> {
     return Array.from(this.triggers.values());
@@ -382,6 +414,36 @@ class BackendStore {
   // Workers
   async getWorkers(): Promise<WorkerInstance[]> {
     return this.workers;
+  }
+
+  async recordWorkerHeartbeat(
+    id: string,
+    data: Partial<WorkerInstance> & { hostname?: string; name?: string }
+  ): Promise<void> {
+    const existingIndex = this.workers.findIndex((w) => w.id === id);
+    const now = new Date().toISOString();
+    if (existingIndex >= 0) {
+      this.workers[existingIndex] = {
+        ...this.workers[existingIndex],
+        ...data,
+        status: (data.status as any) || this.workers[existingIndex].status,
+        lastHeartbeat: now,
+      };
+    } else {
+      this.workers.push({
+        id,
+        name: data.name || id,
+        hostname: data.hostname || 'localhost',
+        status: (data.status as any) || 'idle',
+        concurrency: data.concurrency || 5,
+        currentJobs: data.currentJobs || [],
+        completedJobsCount: data.completedJobsCount || 0,
+        failedJobsCount: data.failedJobsCount || 0,
+        uptimeSeconds: data.uptimeSeconds || 0,
+        lastHeartbeat: now,
+        isSimulated: false,
+      });
+    }
   }
 
   async getQueues(): Promise<WorkerQueueSummary[]> {

@@ -462,7 +462,21 @@ export const WorkflowBuilderPage: React.FC = () => {
     setIsConsoleDrawerOpen(true);
 
     try {
-      // Execute DAG via our ExecutionEngine
+      // Trigger durable backend execution run record
+      let backendRunId: string | undefined = undefined;
+      try {
+        const createRes = await apiClient.createRun(workflow.id, {
+          input: { source: 'builder_test_run' },
+          triggerType: 'manual',
+        });
+        if (createRes.success && createRes.data?.id) {
+          backendRunId = createRes.data.id;
+        }
+      } catch (_backendErr) {
+        // Standalone or offline fallback
+      }
+
+      // Execute DAG with live animation on canvas
       const execution = await ExecutionEngine.execute(currentWf, {
         triggerType: 'builder_test_run',
         maxDelayMs: 1200, // fast-paced for responsive UI feedback
@@ -499,6 +513,10 @@ export const WorkflowBuilderPage: React.FC = () => {
           );
         },
       });
+
+      if (backendRunId) {
+        execution.id = backendRunId;
+      }
 
       // Persist the executed run for history inspection!
       ExecutionService.saveExecution(execution);

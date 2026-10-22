@@ -219,6 +219,96 @@ export class ExecutionRepository {
     }
     return store.saveExecution(execution);
   }
+
+  async createRun(execution: Execution, workflowVersionId?: string): Promise<Execution> {
+    return this.save(execution, workflowVersionId);
+  }
+
+  async updateExecution(executionId: string, updates: Partial<Execution>): Promise<Execution | null> {
+    const hasDb = await ExecutionRepository.checkDb();
+    if (hasDb) {
+      try {
+        const statusEnum = updates.status ? (updates.status.toUpperCase() as PrismaExecutionStatus) : undefined;
+        await prisma.execution.update({
+          where: { id: executionId },
+          data: {
+            status: statusEnum,
+            output: updates.output !== undefined ? (updates.output as any) : undefined,
+            error: updates.error !== undefined ? updates.error : undefined,
+            completedAt: updates.completedAt ? new Date(updates.completedAt) : undefined,
+            durationMs: updates.durationMs !== undefined ? updates.durationMs : undefined,
+          },
+        });
+      } catch (err) {
+        logger.error({ err }, 'Error updating execution in DB, falling back');
+      }
+    }
+    await store.updateExecution(executionId, updates);
+    return this.findById(executionId);
+  }
+
+  async updateNodeExecution(
+    executionId: string,
+    nodeId: string,
+    updates: Partial<NodeExecution>
+  ): Promise<NodeExecution | null> {
+    const hasDb = await ExecutionRepository.checkDb();
+    if (hasDb) {
+      try {
+        const neStatusEnum = updates.status ? (updates.status.toUpperCase() as PrismaExecutionStatus) : undefined;
+        await prisma.nodeExecution.updateMany({
+          where: { executionId, nodeId },
+          data: {
+            status: neStatusEnum,
+            attempt: updates.attempt,
+            input: updates.input !== undefined ? (updates.input as any) : undefined,
+            output: updates.output !== undefined ? (updates.output as any) : undefined,
+            error: updates.error !== undefined ? updates.error : undefined,
+            startedAt: updates.startedAt ? new Date(updates.startedAt) : undefined,
+            completedAt: updates.completedAt ? new Date(updates.completedAt) : undefined,
+            durationMs: updates.durationMs !== undefined ? updates.durationMs : undefined,
+            logs: updates.logs !== undefined ? (updates.logs as any) : undefined,
+          },
+        });
+      } catch (err) {
+        logger.error({ err }, 'Error updating node execution in DB, falling back');
+      }
+    }
+    return store.updateNodeExecution(executionId, nodeId, updates);
+  }
+
+  async getNodeExecutions(executionId: string): Promise<NodeExecution[]> {
+    const hasDb = await ExecutionRepository.checkDb();
+    if (hasDb) {
+      try {
+        const records = await prisma.nodeExecution.findMany({
+          where: { executionId },
+          orderBy: { startedAt: 'asc' },
+        });
+        if (records.length > 0) {
+          return records.map((ne) => ({
+            id: ne.id,
+            executionId: ne.executionId,
+            nodeId: ne.nodeId,
+            nodeLabel: ne.nodeLabel,
+            nodeType: ne.nodeType as any,
+            status: (ne.status.charAt(0).toUpperCase() + ne.status.slice(1).toLowerCase()) as any,
+            attempt: ne.attempt,
+            input: ne.input,
+            output: ne.output,
+            error: ne.error,
+            startedAt: ne.startedAt?.toISOString() || null,
+            completedAt: ne.completedAt?.toISOString() || null,
+            durationMs: ne.durationMs || undefined,
+            logs: (ne.logs as any) || [],
+          }));
+        }
+      } catch (err) {
+        logger.error({ err }, 'Error getting node executions from DB, falling back');
+      }
+    }
+    return store.getNodeExecutions(executionId);
+  }
 }
 
 export const executionRepository = new ExecutionRepository();

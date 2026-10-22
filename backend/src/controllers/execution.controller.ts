@@ -44,9 +44,55 @@ export class ExecutionController {
     }
   }
 
+  public static async getNodeExecutions(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      const nodes = await executionService.getNodeExecutions(id);
+      res.status(200).json({
+        success: true,
+        data: nodes,
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public static async createRun(req: Request, res: Response, next: NextFunction) {
+    try {
+      const workflowId = String(req.params.workflowId || req.params.id);
+      const { input, triggerType } = req.body;
+      const execution = await executionService.createDurableRun(workflowId, {
+        input,
+        triggerType,
+      });
+
+      res.status(201).json({
+        success: true,
+        data: execution,
+        message: 'Workflow run queued for execution',
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  public static async retryRun(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = String(req.params.id);
+      const execution = await executionService.retryExecution(id);
+      res.status(200).json({
+        success: true,
+        data: execution,
+        message: 'Workflow run retry initiated',
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+
   public static async trigger(req: Request, res: Response, next: NextFunction) {
     try {
-      const workflowId = String(req.params.workflowId);
+      const workflowId = String(req.params.workflowId || req.params.id);
       const { input, triggerType } = req.body;
       const execution = await executionService.triggerExecution(workflowId, {
         input,

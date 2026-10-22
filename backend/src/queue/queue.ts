@@ -7,14 +7,21 @@ export const QUEUE_NAMES = {
 } as const;
 
 export interface WorkflowTaskJobData {
-  executionId: string;
+  executionId?: string;
+  runId?: string;
   workflowId: string;
   workflowVersion: number;
   nodeId: string;
   nodeType: string;
   nodeLabel: string;
-  inputPayload: Record<string, unknown>;
+  config?: Record<string, any>;
+  workflowInput?: Record<string, unknown>;
+  upstreamOutputs?: Record<string, unknown>;
+  payload?: any;
+  inputPayload?: Record<string, unknown>;
   attempt: number;
+  maxAttempts?: number;
+  delayMs?: number;
 }
 
 let taskQueue: Queue<WorkflowTaskJobData> | null = null;

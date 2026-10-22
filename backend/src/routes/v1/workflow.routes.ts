@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import { WorkflowController } from '../../controllers/workflow.controller.js';
+import { ExecutionController } from '../../controllers/execution.controller.js';
 import { validateRequest } from '../../middleware/validation.middleware.js';
 import {
   createWorkflowSchema,
   updateWorkflowSchema,
   duplicateWorkflowSchema,
+  runWorkflowSchema,
   paginationQuerySchema,
   idParamSchema,
 } from '../../validation/schemas.js';
@@ -29,5 +31,9 @@ router.post('/:workflowId/publish', validateRequest({ params: idParamSchema }), 
 router.post('/:workflowId/activate', validateRequest({ params: idParamSchema }), WorkflowController.activate);
 router.post('/:workflowId/pause', validateRequest({ params: idParamSchema }), WorkflowController.pause);
 router.post('/:workflowId/validate', validateRequest({ params: idParamSchema }), WorkflowController.validate);
+
+// Trigger / Create Runs
+router.post('/:workflowId/runs', validateRequest({ params: idParamSchema, body: runWorkflowSchema }), ExecutionController.createRun);
+router.post('/:workflowId/run', validateRequest({ params: idParamSchema, body: runWorkflowSchema }), ExecutionController.trigger);
 
 export { router as workflowRouter };
