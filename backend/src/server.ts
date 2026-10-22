@@ -44,6 +44,8 @@ app.use(
       'X-Idempotency-Key',
       'X-Request-Id',
       'X-Requested-With',
+      'x-worker-secret',
+      'x-internal-secret',
     ],
   })
 );

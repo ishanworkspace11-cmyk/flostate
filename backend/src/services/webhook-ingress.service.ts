@@ -348,6 +348,7 @@ export class WebhookIngressService {
             executionId: execution.id,
             status: execution.status,
             enqueuedAt: execution.startedAt,
+            isDuplicate: false,
           },
           message: `Webhook successfully ingested; execution #${execution.id.substring(0, 8)} queued`,
         },

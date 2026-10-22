@@ -1,5 +1,6 @@
 import { WorkflowNode } from '../models/workflow.types.js';
 import { ExecutionLogEntry } from '../models/execution.types.js';
+import { validateSsrfTargetUrl } from '../utils/ssrf-protection.js';
 
 export interface NodeExecutionContext {
   runId: string;
@@ -230,12 +231,8 @@ export class HttpRequestExecutor implements NodeExecutor {
       return { status: mockConfig.status || 200, isMock: true, data: mockConfig.body || {} };
     }
 
-    // SSRF URL Security Validation
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      const err: any = new Error(`Invalid URL scheme: Only http:// and https:// URLs are permitted.`);
-      err.isPermanent = true;
-      throw err;
-    }
+    // SSRF URL Security Validation & DNS inspection
+    await validateSsrfTargetUrl(url);
 
     context.log('info', `Dispatching ${method} request to: ${url}`);
 
@@ -253,6 +250,7 @@ export class HttpRequestExecutor implements NodeExecutor {
         headers: { 'Content-Type': 'application/json', ...headers },
         body,
         signal: controller.signal,
+        redirect: 'error', // Prevent SSRF bypass via 3xx redirects to private/metadata IP
       });
 
       clearTimeout(timeoutTimer);
@@ -316,11 +314,8 @@ export class WebhookActionExecutor implements NodeExecutor {
       };
     }
 
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      const err: any = new Error(`Invalid webhook URL: Only http:// and https:// URLs are permitted.`);
-      err.isPermanent = true;
-      throw err;
-    }
+    // SSRF Safeguard inspection
+    await validateSsrfTargetUrl(url);
 
     context.log('info', `Dispatching outbound webhook payload to: ${url}`);
     const controller = new AbortController();
@@ -333,6 +328,7 @@ export class WebhookActionExecutor implements NodeExecutor {
         headers: { 'Content-Type': 'application/json', ...(config.headers || {}) },
         body: JSON.stringify(payloadToSend),
         signal: controller.signal,
+        redirect: 'error',
       });
 
       clearTimeout(timeout);
