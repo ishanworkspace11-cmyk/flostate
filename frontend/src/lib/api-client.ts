@@ -1,3 +1,5 @@
+import { WorkerInstance, WorkerQueueSummary, WorkerEvent, SystemExecutionHealth } from '../features/workers/worker.types';
+
 /**
  * The Dormammu Loop - Frontend API Client
  * Compatible with backend v1 API (/api/v1) with seamless fallback
@@ -360,12 +362,36 @@ class DormammuApiClient {
   }
 
   // Workers
-  async listWorkers() {
-    return this.request<any[]>('/workers');
+  async listWorkers(params?: { status?: string; includeSimulated?: boolean }) {
+    const query = new URLSearchParams();
+    if (params?.status) query.set('status', params.status);
+    if (params?.includeSimulated !== undefined) query.set('includeSimulated', String(params.includeSimulated));
+    const qs = query.toString();
+    return this.request<WorkerInstance[]>(`/workers${qs ? `?${qs}` : ''}`);
+  }
+
+  async getWorker(id: string) {
+    return this.request<WorkerInstance>(`/workers/${id}`);
   }
 
   async getQueues() {
-    return this.request<any[]>('/workers/queues');
+    return this.request<WorkerQueueSummary[]>('/workers/queues');
+  }
+
+  async getQueueMetrics() {
+    return this.request<WorkerQueueSummary>('/workers/queue-metrics');
+  }
+
+  async getWorkerEvents(params?: { workerId?: string; limit?: number }) {
+    const query = new URLSearchParams();
+    if (params?.workerId) query.set('workerId', params.workerId);
+    if (params?.limit) query.set('limit', String(params.limit));
+    const qs = query.toString();
+    return this.request<WorkerEvent[]>(`/workers/events${qs ? `?${qs}` : ''}`);
+  }
+
+  async getSystemHealth() {
+    return this.request<SystemExecutionHealth>('/workers/health');
   }
 
   // Settings

@@ -35,6 +35,16 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
     colorClasses = 'bg-indigo-50 text-indigo-700 border-indigo-200';
     dotColor = 'bg-indigo-600';
     isPulsing = true;
+  } else if (norm === 'draining') {
+    colorClasses = 'bg-amber-50 text-amber-700 border-amber-200';
+    dotColor = 'bg-amber-500';
+    isPulsing = true;
+  } else if (norm === 'stale') {
+    colorClasses = 'bg-orange-50 text-orange-700 border-orange-200';
+    dotColor = 'bg-orange-500';
+  } else if (norm === 'unknown') {
+    colorClasses = 'bg-zinc-100 text-zinc-600 border-zinc-200';
+    dotColor = 'bg-zinc-400';
   } else if (norm === 'pending' || norm === 'ready' || norm === 'draft' || norm === 'idle') {
     colorClasses = 'bg-slate-100 text-slate-700 border-slate-200';
     dotColor = 'bg-slate-400';

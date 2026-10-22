@@ -130,39 +130,12 @@ class BackendStore {
     };
     this.triggers.set(tr1.id, tr1);
 
-    // Seed Workers & Queues
-    this.workers = [
-      {
-        id: 'backend-worker-01',
-        name: 'Node Worker Alpha (BullMQ)',
-        hostname: 'worker-01.us-east.dormammu.internal',
-        status: 'busy',
-        concurrency: 5,
-        currentJobs: [{ jobId: 'job_1', executionId: 'run-91823', nodeId: 'node-enrich-company', nodeLabel: 'Enrich Company', startedAt: new Date().toISOString() }],
-        completedJobsCount: 1240,
-        failedJobsCount: 14,
-        uptimeSeconds: 864200,
-        lastHeartbeat: new Date().toISOString(),
-        isSimulated: false,
-      },
-      {
-        id: 'backend-worker-02',
-        name: 'Node Worker Beta (BullMQ)',
-        hostname: 'worker-02.us-east.dormammu.internal',
-        status: 'idle',
-        concurrency: 5,
-        currentJobs: [],
-        completedJobsCount: 1195,
-        failedJobsCount: 8,
-        uptimeSeconds: 864150,
-        lastHeartbeat: new Date().toISOString(),
-        isSimulated: false,
-      },
-    ];
+    // Initialize Workers (populated dynamically by active worker instances)
+    this.workers = [];
 
     this.queues = [
-      { queueName: 'dormammu-tasks-default', activeCount: 1, waitingCount: 0, delayedCount: 0, completedCount: 3840, failedCount: 28, isSimulated: false },
-      { queueName: 'dormammu-tasks-high-prio', activeCount: 0, waitingCount: 0, delayedCount: 0, completedCount: 1420, failedCount: 5, isSimulated: false },
+      { queueName: 'dormammu-tasks-default', activeCount: 0, waitingCount: 0, delayedCount: 0, completedCount: 0, failedCount: 0, isSimulated: false, isExact: true, driver: 'bullmq' },
+      { queueName: 'dormammu-tasks-high-prio', activeCount: 0, waitingCount: 0, delayedCount: 0, completedCount: 0, failedCount: 0, isSimulated: false, isExact: true, driver: 'bullmq' },
     ];
   }
 
@@ -535,7 +508,25 @@ class BackendStore {
 
   // Workers
   async getWorkers(): Promise<WorkerInstance[]> {
-    return this.workers;
+    return [...this.workers];
+  }
+
+  async getWorkerById(id: string): Promise<WorkerInstance | null> {
+    const worker = this.workers.find((w) => w.id === id);
+    return worker ? { ...worker } : null;
+  }
+
+  async clearWorkers(): Promise<void> {
+    this.workers = [];
+  }
+
+  async removeWorker(id: string): Promise<boolean> {
+    const idx = this.workers.findIndex((w) => w.id === id);
+    if (idx >= 0) {
+      this.workers.splice(idx, 1);
+      return true;
+    }
+    return false;
   }
 
   async recordWorkerHeartbeat(
@@ -562,8 +553,12 @@ class BackendStore {
         completedJobsCount: data.completedJobsCount || 0,
         failedJobsCount: data.failedJobsCount || 0,
         uptimeSeconds: data.uptimeSeconds || 0,
+        registeredAt: data.registeredAt || now,
         lastHeartbeat: now,
-        isSimulated: false,
+        isSimulated: data.isSimulated || false,
+        lastError: data.lastError,
+        shutdownInfo: data.shutdownInfo,
+        memoryUsage: data.memoryUsage,
       });
     }
   }

@@ -129,3 +129,58 @@ export const nodeExecutionLogsQuerySchema = z.object({
   level: z.enum(['info', 'warn', 'error', 'debug']).optional(),
 });
 
+export const workerIdParamSchema = z.object({
+  id: z.string().min(1, 'Worker ID is required').optional(),
+  workerId: z.string().min(1, 'Worker ID is required').optional(),
+}).refine((data) => data.id || data.workerId, {
+  message: 'Worker ID is required',
+});
+
+export const workerListQuerySchema = z.object({
+  status: z.string().optional(),
+  includeSimulated: z
+    .enum(['true', 'false', '1', '0'])
+    .optional()
+    .transform((val) => val === 'true' || val === '1'),
+});
+
+export const workerEventsQuerySchema = z.object({
+  workerId: z.string().optional(),
+  type: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+export const workerHeartbeatSchema = z.object({
+  id: z.string().optional(),
+  workerId: z.string().optional(),
+  name: z.string().optional(),
+  hostname: z.string().optional(),
+  status: z.enum(['idle', 'busy', 'draining', 'offline', 'stale', 'unknown', 'paused']).optional(),
+  concurrency: z.number().int().min(1).optional(),
+  currentJobs: z
+    .array(
+      z.object({
+        jobId: z.string(),
+        executionId: z.string(),
+        nodeId: z.string(),
+        nodeLabel: z.string(),
+        startedAt: z.string(),
+      })
+    )
+    .optional(),
+  completedJobsCount: z.number().int().min(0).optional(),
+  failedJobsCount: z.number().int().min(0).optional(),
+  uptimeSeconds: z.number().int().min(0).optional(),
+  registeredAt: z.string().optional(),
+  lastError: z.any().optional(),
+  shutdownInfo: z.any().optional(),
+  memoryUsage: z
+    .object({
+      heapUsedMB: z.number(),
+      heapTotalMB: z.number(),
+      rssMB: z.number(),
+    })
+    .optional(),
+});
+
+
